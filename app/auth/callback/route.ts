@@ -1,0 +1,60 @@
+import { createClient } from '@/lib/supabase/server'
+import { NextResponse } from 'next/server'
+
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url)
+  const code = requestUrl.searchParams.get('code')
+  const origin = requestUrl.origin
+  const redirectTo = requestUrl.searchParams.get('redirect_to')?.toString()
+
+  if (code) {
+    const supabase = await createClient()
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+    
+    if (!error && data.user) {
+      // Check if profile exists, if not create one
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', data.user.id)
+        .single()
+
+      if (!existingProfile) {
+        // Create profile from user metadata
+        await supabase.from('profiles').insert({
+          id: data.user.id,
+          email: data.user.email!,
+          full_name: data.user.user_metadata?.full_name || null,
+          role: data.user.user_metadata?.role || 'client',
+        })
+
+        // If user is a client, also create client record
+        if (data.user.user_metadata?.role === 'client' || !data.user.user_metadata?.role) {
+          await supabase.from('clients').insert({
+            profile_id: data.user.id,
+          })
+        }
+      }
+
+      // Check role for redirect
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user.id)
+        .single()
+
+      if (redirectTo) {
+        return NextResponse.redirect(`${origin}${redirectTo}`)
+      }
+
+      if (profile?.role === 'admin' || profile?.role === 'staff') {
+        return NextResponse.redirect(`${origin}/admin`)
+      }
+
+      return NextResponse.redirect(`${origin}/portal`)
+    }
+  }
+
+  // Auth code error - redirect to error page
+  return NextResponse.redirect(`${origin}/auth/error`)
+}
