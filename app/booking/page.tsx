@@ -14,25 +14,9 @@ export default async function BookingPage() {
   // Get active services
   const { data: services } = await supabase
     .from('services')
-    .select('*, addons:service_addons(*)')
-    .eq('is_active', true)
-    .order('sort_order')
-
-  // Get availability settings
-  const { data: availability } = await supabase
-    .from('availability')
     .select('*')
-    .eq('is_available', true)
-
-  // Get blocked dates for next 3 months
-  const today = new Date()
-  const threeMonthsLater = new Date(today.getFullYear(), today.getMonth() + 3, today.getDate())
-  
-  const { data: blockedDates } = await supabase
-    .from('blocked_dates')
-    .select('blocked_date')
-    .gte('blocked_date', today.toISOString().split('T')[0])
-    .lte('blocked_date', threeMonthsLater.toISOString().split('T')[0])
+    .eq('is_active', true)
+    .order('base_price')
 
   // Check if user is logged in
   const { data: { user } } = await supabase.auth.getUser()
@@ -63,8 +47,8 @@ export default async function BookingPage() {
       <div className="pt-20">
         <BookingForm
           services={services || []}
-          availability={availability || []}
-          blockedDates={blockedDates?.map(d => d.blocked_date) || []}
+          availability={[]}
+          blockedDates={[]}
           clientInfo={clientInfo}
           isLoggedIn={!!user}
         />
