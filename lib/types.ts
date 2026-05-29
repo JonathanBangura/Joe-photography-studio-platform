@@ -226,3 +226,167 @@ export interface BlockedDate {
   reason: string | null
   created_at: string
 }
+
+// Business Management Types
+
+export interface Permission {
+  id: string
+  role: 'admin' | 'staff' | 'client'
+  resource: string
+  can_view: boolean
+  can_create: boolean
+  can_edit: boolean
+  can_delete: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditLog {
+  id: string
+  user_id: string | null
+  action: string
+  resource_type: string
+  resource_id: string | null
+  old_data: Record<string, unknown> | null
+  new_data: Record<string, unknown> | null
+  ip_address: string | null
+  user_agent: string | null
+  created_at: string
+}
+
+export interface ExpenseCategory {
+  id: string
+  name: string
+  description: string | null
+  color: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface Expense {
+  id: string
+  category_id: string | null
+  description: string
+  amount: number
+  expense_date: string
+  vendor: string | null
+  receipt_url: string | null
+  payment_method: string | null
+  is_reimbursable: boolean
+  reimbursed_at: string | null
+  notes: string | null
+  created_by: string | null
+  approved_by: string | null
+  approved_at: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'reimbursed'
+  created_at: string
+  updated_at: string
+}
+
+export interface EquipmentCategory {
+  id: string
+  name: string
+  description: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface Equipment {
+  id: string
+  category_id: string | null
+  name: string
+  description: string | null
+  serial_number: string | null
+  purchase_date: string | null
+  purchase_price: number | null
+  current_value: number | null
+  condition: 'excellent' | 'good' | 'fair' | 'poor' | 'needs_repair'
+  status: 'available' | 'in_use' | 'maintenance' | 'retired'
+  location: string | null
+  assigned_to: string | null
+  last_maintenance_date: string | null
+  next_maintenance_date: string | null
+  warranty_expiry: string | null
+  notes: string | null
+  image_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EquipmentMaintenance {
+  id: string
+  equipment_id: string
+  maintenance_type: string
+  description: string | null
+  cost: number | null
+  performed_by: string | null
+  maintenance_date: string
+  next_due_date: string | null
+  created_at: string
+}
+
+export interface WorkflowStage {
+  id: string
+  name: string
+  description: string | null
+  color: string
+  sort_order: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface JobWorkflow {
+  id: string
+  booking_id: string
+  current_stage_id: string | null
+  due_date: string | null
+  priority: 'low' | 'medium' | 'high' | 'urgent'
+  notes: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface JobWorkflowHistory {
+  id: string
+  job_workflow_id: string
+  from_stage_id: string | null
+  to_stage_id: string | null
+  changed_by: string | null
+  notes: string | null
+  created_at: string
+}
+
+export interface StaffSchedule {
+  id: string
+  staff_id: string
+  day_of_week: number
+  start_time: string
+  end_time: string
+  is_working: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TimeOffRequest {
+  id: string
+  staff_id: string
+  start_date: string
+  end_date: string
+  reason: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  approved_by: string | null
+  approved_at: string | null
+  notes: string | null
+  created_at: string
+}
+
+export interface BusinessSetting {
+  id: string
+  key: string
+  value: unknown
+  description: string | null
+  category: string
+  created_at: string
+  updated_at: string
+}
