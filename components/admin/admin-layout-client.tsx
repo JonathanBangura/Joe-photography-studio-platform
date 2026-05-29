@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Camera,
   LayoutDashboard,
@@ -25,8 +25,8 @@ import {
   ClipboardList,
   BarChart3,
   History,
-  Wrench,
   ChevronDown,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +39,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
@@ -47,11 +55,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import type { StudioRole, RolePermission } from '@/lib/types'
+import { ROLE_LABELS, type Module } from '@/lib/permissions'
 
 type NavItem = {
   href: string
   icon: React.ElementType
   label: string
+  module: Module
 }
 
 type NavSection = {
@@ -63,47 +74,47 @@ const navSections: NavSection[] = [
   {
     title: 'Overview',
     items: [
-      { href: '/admin', icon: LayoutDashboard, label: 'Dashboard' },
+      { href: '/admin', icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard' },
     ],
   },
   {
     title: 'Operations',
     items: [
-      { href: '/admin/bookings', icon: Calendar, label: 'Bookings' },
-      { href: '/admin/jobs', icon: ClipboardList, label: 'Job Tracker' },
-      { href: '/admin/clients', icon: Users, label: 'Clients' },
-      { href: '/admin/inquiries', icon: MessageSquare, label: 'Inquiries' },
+      { href: '/admin/bookings', icon: Calendar, label: 'Bookings', module: 'bookings' },
+      { href: '/admin/jobs', icon: ClipboardList, label: 'Job Tracker', module: 'jobs' },
+      { href: '/admin/clients', icon: Users, label: 'Clients', module: 'clients' },
+      { href: '/admin/inquiries', icon: MessageSquare, label: 'Inquiries', module: 'inquiries' },
     ],
   },
   {
     title: 'Content',
     items: [
-      { href: '/admin/gallery', icon: Image, label: 'Gallery' },
-      { href: '/admin/services', icon: FileText, label: 'Services' },
+      { href: '/admin/gallery', icon: Image, label: 'Gallery', module: 'gallery' },
+      { href: '/admin/services', icon: FileText, label: 'Services', module: 'services' },
     ],
   },
   {
     title: 'Finance',
     items: [
-      { href: '/admin/invoices', icon: CreditCard, label: 'Invoices' },
-      { href: '/admin/expenses', icon: DollarSign, label: 'Expenses' },
-      { href: '/admin/reports', icon: BarChart3, label: 'Reports' },
+      { href: '/admin/invoices', icon: CreditCard, label: 'Invoices', module: 'invoices' },
+      { href: '/admin/expenses', icon: DollarSign, label: 'Expenses', module: 'expenses' },
+      { href: '/admin/reports', icon: BarChart3, label: 'Reports', module: 'reports' },
     ],
   },
   {
     title: 'Resources',
     items: [
-      { href: '/admin/equipment', icon: Package, label: 'Equipment' },
-      { href: '/admin/staff', icon: UserCog, label: 'Staff' },
+      { href: '/admin/equipment', icon: Package, label: 'Equipment', module: 'equipment' },
+      { href: '/admin/staff', icon: UserCog, label: 'Staff', module: 'staff' },
     ],
   },
   {
     title: 'Administration',
     items: [
-      { href: '/admin/users', icon: Users, label: 'Users' },
-      { href: '/admin/permissions', icon: Shield, label: 'Permissions' },
-      { href: '/admin/audit-logs', icon: History, label: 'Audit Logs' },
-      { href: '/admin/settings', icon: Settings, label: 'Settings' },
+      { href: '/admin/users', icon: Users, label: 'Users', module: 'users' },
+      { href: '/admin/permissions', icon: Shield, label: 'Permissions', module: 'permissions' },
+      { href: '/admin/audit-logs', icon: History, label: 'Audit Logs', module: 'audit_logs' },
+      { href: '/admin/settings', icon: Settings, label: 'Settings', module: 'settings' },
     ],
   },
 ]
@@ -114,8 +125,22 @@ interface AdminLayoutClientProps {
     email?: string
     full_name?: string
     avatar_url?: string
+    studio_role?: StudioRole
   } | null
 }
+
+const ALL_ROLES: StudioRole[] = [
+  'super_admin',
+  'studio_admin',
+  'studio_manager',
+  'photographer',
+  'photo_editor',
+  'receptionist',
+  'finance_officer',
+  'gallery_manager',
+  'marketing_manager',
+  'viewer',
+]
 
 export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
   const pathname = usePathname()
@@ -123,6 +148,48 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [expandedSections, setExpandedSections] = useState<string[]>(['Overview', 'Operations', 'Content', 'Finance', 'Resources', 'Administration'])
+  const [permissions, setPermissions] = useState<RolePermission[]>([])
+  const [previewRole, setPreviewRole] = useState<StudioRole | null>(null)
+  const [isLoadingPermissions, setIsLoadingPermissions] = useState(true)
+
+  const actualRole = user?.studio_role || 'viewer'
+  const effectiveRole = previewRole || actualRole
+  const isSuperAdmin = actualRole === 'super_admin'
+
+  // Fetch permissions on mount
+  useEffect(() => {
+    const fetchPermissions = async () => {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('role_permissions')
+        .select('*')
+        .order('role')
+        .order('module')
+      
+      if (!error && data) {
+        setPermissions(data as RolePermission[])
+      }
+      setIsLoadingPermissions(false)
+    }
+    fetchPermissions()
+  }, [])
+
+  // Filter navigation based on permissions
+  const filteredNavSections = useMemo(() => {
+    if (isLoadingPermissions) return []
+    
+    return navSections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => {
+          const permission = permissions.find(
+            (p) => p.role === effectiveRole && p.module === item.module
+          )
+          return permission?.can_access === true
+        }),
+      }))
+      .filter((section) => section.items.length > 0)
+  }, [permissions, effectiveRole, isLoadingPermissions])
 
   const toggleSection = (title: string) => {
     setExpandedSections((prev) =>
@@ -171,7 +238,7 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
 
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
-          {navSections.map((section) => (
+          {filteredNavSections.map((section) => (
             <Collapsible
               key={section.title}
               open={sidebarCollapsed ? true : expandedSections.includes(section.title)}
@@ -289,6 +356,38 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Role Preview (Super Admin only) */}
+            {isSuperAdmin && (
+              <div className="hidden md:flex items-center gap-2">
+                <Select
+                  value={previewRole || 'actual'}
+                  onValueChange={(value) => setPreviewRole(value === 'actual' ? null : value as StudioRole)}
+                >
+                  <SelectTrigger className="w-[180px] h-9 text-xs">
+                    <SelectValue placeholder="Preview as role..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="actual">
+                      <span className="flex items-center gap-2">
+                        <RefreshCw className="w-3 h-3" />
+                        My Role ({ROLE_LABELS[actualRole]})
+                      </span>
+                    </SelectItem>
+                    <DropdownMenuSeparator />
+                    {ALL_ROLES.map((role) => (
+                      <SelectItem key={role} value={role}>
+                        {ROLE_LABELS[role]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {previewRole && (
+                  <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/30">
+                    Preview Mode
+                  </Badge>
+                )}
+              </div>
+            )}
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full" />

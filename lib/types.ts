@@ -1,12 +1,33 @@
 // Database types for JoeStudio Photography
 
+// Studio Role Types
+export type StudioRole =
+  | 'super_admin'
+  | 'studio_admin'
+  | 'studio_manager'
+  | 'photographer'
+  | 'photo_editor'
+  | 'receptionist'
+  | 'finance_officer'
+  | 'gallery_manager'
+  | 'marketing_manager'
+  | 'viewer'
+
 export interface Profile {
   id: string
   email: string
   full_name: string | null
   phone: string | null
   role: 'client' | 'admin' | 'staff'
+  studio_role: StudioRole
   avatar_url: string | null
+  is_active: boolean
+  hire_date: string | null
+  hourly_rate: number | null
+  department: string | null
+  bio: string | null
+  emergency_contact: string | null
+  emergency_phone: string | null
   created_at: string
   updated_at: string
 }
@@ -379,6 +400,27 @@ export interface TimeOffRequest {
   approved_at: string | null
   notes: string | null
   created_at: string
+}
+
+export interface RolePermission {
+  id: string
+  role: StudioRole
+  module: string
+  can_access: boolean
+  can_view: boolean
+  can_create: boolean
+  can_edit: boolean
+  can_delete: boolean
+  can_approve: boolean
+  can_export: boolean
+  can_assign_staff: boolean
+  can_upload_photos: boolean
+  can_publish_gallery: boolean
+  can_send_invoice: boolean
+  can_record_payment: boolean
+  can_issue_refund: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface BusinessSetting {
