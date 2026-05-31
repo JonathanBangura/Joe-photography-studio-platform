@@ -182,6 +182,7 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => {
+          if (effectiveRole === 'super_admin') return true
           const permission = permissions.find(
             (p) => p.role === effectiveRole && p.module === item.module
           )
