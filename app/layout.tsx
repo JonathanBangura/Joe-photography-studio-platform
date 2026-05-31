@@ -1,47 +1,44 @@
-import type { Metadata } from 'next'
-import { Inter, Playfair_Display, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
-import { Toaster } from '@/components/ui/sonner'
-import './globals.css'
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+import { AdminLayoutClient } from '@/components/admin/admin-layout-client'
 
-const inter = Inter({ 
-  subsets: ['latin'],
-  variable: '--font-inter',
-})
-
-const playfair = Playfair_Display({ 
-  subsets: ['latin'],
-  variable: '--font-playfair',
-})
-
-const geistMono = Geist_Mono({ 
-  subsets: ['latin'],
-  variable: '--font-geist-mono',
-})
-
-export const metadata: Metadata = {
-  title: 'Joe Studio | Premium Photography',
-  description: 'Capturing life\'s precious moments with artistry and elegance. Professional photography services for weddings, portraits, events, and more.',
-  keywords: ['photography', 'wedding photography', 'portrait', 'studio', 'professional photographer'],
-  openGraph: {
-    title: 'Joe Studio | Premium Photography',
-    description: 'Capturing life\'s precious moments with artistry and elegance.',
-    type: 'website',
-  },
-}
-
-export default function RootLayout({
+export default async function AdminLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
+  const supabase = await createClient()
+  
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) {
+    redirect('/auth/login')
+  }
+
+  // Check if user is admin or staff
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single()
+
+  const studioRole = profile.studio_role || (profile.role === 'admin' ? 'studio_admin' : profile.role === 'staff' ? 'studio_manager' : 'viewer')
+
+  // Allow back-office users into admin. Client-only users stay in the client portal.
+  if (!profile || (profile.role === 'client' && studioRole === 'viewer')) {
+    redirect('/portal')
+  }
+
   return (
-    <html lang="en" className="dark bg-background">
-      <body className={`${inter.variable} ${playfair.variable} ${geistMono.variable} font-sans antialiased`}>
-        {children}
-        <Toaster />
-        {process.env.NODE_ENV === 'production' && <Analytics />}
-      </body>
-    </html>
+    <AdminLayoutClient
+      user={{
+        email: profile.email,
+        full_name: profile.full_name,
+        avatar_url: profile.avatar_url,
+        studio_role: studioRole,
+      }}
+    >
+      {children}
+    </AdminLayoutClient>
   )
 }
