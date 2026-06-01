@@ -15,7 +15,7 @@ export default async function AdminLayout({
     redirect('/auth/login')
   }
 
-  // Check if user is admin or staff
+  // Check if user is an active back-office user
   const { data: profile } = await supabase
     .from('profiles')
     .select('*')
@@ -24,15 +24,19 @@ export default async function AdminLayout({
 
   const studioRole = profile?.studio_role || (profile?.role === 'admin' ? 'studio_admin' : profile?.role === 'staff' ? 'studio_manager' : 'viewer')
 
+  if (!profile || profile.is_active === false) {
+    redirect('/auth/login')
+  }
+
   // Allow back-office users into admin. Client-only users stay in the client portal.
-  if (!profile || (profile.role === 'client' && studioRole === 'viewer')) {
+  if (profile.role === 'client' && studioRole === 'viewer') {
     redirect('/portal')
   }
 
   return (
     <AdminLayoutClient
       user={{
-        email: profile.email,
+        email: profile.email || user.email,
         full_name: profile.full_name,
         avatar_url: profile.avatar_url,
         studio_role: studioRole,

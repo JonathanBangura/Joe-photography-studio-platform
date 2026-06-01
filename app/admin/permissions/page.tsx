@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import { createAuditLog } from '@/lib/audit-log-client'
 import { Check, Eye, Save, Shield, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -248,6 +249,12 @@ export default function PermissionsPage() {
         return
       }
     }
+
+    await createAuditLog({
+      action: 'permission_change',
+      resource_type: 'role_permissions',
+      new_data: { updated_permissions: permissions.length },
+    })
 
     toast.success('Role permissions saved successfully')
     setHasChanges(false)

@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { ROLE_LABELS, type StudioRole } from '@/lib/permissions'
+import { createAuditLog } from '@/lib/audit-log-client'
 
 type LegacyUserRole = 'admin' | 'staff' | 'client'
 
@@ -148,6 +149,12 @@ export default function UsersPage() {
     if (error) {
       toast.error('Failed to update user role')
     } else {
+      await createAuditLog({
+        action: 'role_change',
+        resource_type: 'profiles',
+        resource_id: userId,
+        new_data: { studio_role: studioRole, role: getLegacyRoleFromStudioRole(studioRole) },
+      })
       toast.success('User role updated')
       fetchUsers()
     }
@@ -162,6 +169,12 @@ export default function UsersPage() {
     if (error) {
       toast.error('Failed to update user status')
     } else {
+      await createAuditLog({
+        action: 'status_change',
+        resource_type: 'profiles',
+        resource_id: userId,
+        new_data: { is_active: isActive },
+      })
       toast.success(isActive ? 'User activated' : 'User deactivated')
       fetchUsers()
     }
@@ -186,6 +199,17 @@ export default function UsersPage() {
     if (error) {
       toast.error('Failed to update user')
     } else {
+      await createAuditLog({
+        action: 'update',
+        resource_type: 'profiles',
+        resource_id: editUser.id,
+        new_data: {
+          full_name: editUser.full_name,
+          phone: editUser.phone,
+          department: editUser.department,
+          studio_role: studioRole,
+        },
+      })
       toast.success('User updated successfully')
       setEditDialogOpen(false)
       fetchUsers()
