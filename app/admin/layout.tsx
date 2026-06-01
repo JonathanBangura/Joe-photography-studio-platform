@@ -8,9 +8,9 @@ export default async function AdminLayout({
   children: React.ReactNode
 }) {
   const supabase = await createClient()
-  
+
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   if (!user) {
     redirect('/auth/login')
   }
@@ -22,7 +22,10 @@ export default async function AdminLayout({
     .eq('id', user.id)
     .single()
 
-  if (!profile || (profile.role !== 'admin' && profile.role !== 'staff')) {
+  const studioRole = profile?.studio_role || (profile?.role === 'admin' ? 'studio_admin' : profile?.role === 'staff' ? 'studio_manager' : 'viewer')
+
+  // Allow back-office users into admin. Client-only users stay in the client portal.
+  if (!profile || (profile.role === 'client' && studioRole === 'viewer')) {
     redirect('/portal')
   }
 
@@ -32,6 +35,7 @@ export default async function AdminLayout({
         email: profile.email,
         full_name: profile.full_name,
         avatar_url: profile.avatar_url,
+        studio_role: studioRole,
       }}
     >
       {children}
