@@ -39,6 +39,8 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import type { Booking, Service, Client } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
+import { createAuditLog } from '@/lib/audit-log-client'
+import { createInvoiceForBooking, createWorkflowForBooking, moveBookingWorkflowToStage } from '@/lib/business-logic-client'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -94,11 +96,13 @@ export function BookingsClient({ initialBookings, services, clients }: BookingsC
 
     const selectedService = services.find(s => s.id === newBooking.service_id)
     
+    const totalAmount = Number(selectedService?.base_price || 0)
+
     const { data, error } = await supabase
       .from('bookings')
       .insert({
         ...newBooking,
-        total_amount: selectedService?.base_price || 0,
+        total_amount: totalAmount,
         status: 'pending',
       })
       .select('*, service:services(*), client:clients(*, profile:profiles(*))')
@@ -108,6 +112,32 @@ export function BookingsClient({ initialBookings, services, clients }: BookingsC
       toast.error('Failed to create booking')
       setIsLoading(false)
       return
+    }
+
+    try {
+      await createInvoiceForBooking({
+        bookingId: data.id,
+        clientId: newBooking.client_id,
+        totalAmount,
+        notes: `Auto-created from booking ${data.id}`,
+      })
+
+      await createWorkflowForBooking({
+        bookingId: data.id,
+        bookingDate: newBooking.booking_date,
+        priority: 'medium',
+        notes: 'Auto-created from booking',
+      })
+
+      await createAuditLog({
+        action: 'create',
+        resource_type: 'booking',
+        resource_id: data.id,
+        new_data: data,
+      })
+    } catch (businessError) {
+      console.error('Booking business automation failed:', businessError)
+      toast.warning('Booking created, but invoice/workflow automation needs review')
     }
 
     setBookings([data, ...bookings])
@@ -129,14 +159,38 @@ export function BookingsClient({ initialBookings, services, clients }: BookingsC
   const handleUpdateStatus = async (bookingId: string, newStatus: string) => {
     const supabase = createClient()
     
+    const oldBooking = bookings.find((booking) => booking.id === bookingId)
+
     const { error } = await supabase
       .from('bookings')
-      .update({ status: newStatus })
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', bookingId)
 
     if (error) {
       toast.error('Failed to update status')
       return
+    }
+
+    try {
+      if (newStatus === 'confirmed') {
+        await moveBookingWorkflowToStage(bookingId, 'Shoot Scheduled', 'Booking confirmed')
+      }
+      if (newStatus === 'in_progress') {
+        await moveBookingWorkflowToStage(bookingId, 'Shoot Scheduled', 'Booking is now in progress')
+      }
+      if (newStatus === 'completed') {
+        await moveBookingWorkflowToStage(bookingId, 'Job Closed', 'Booking completed')
+      }
+
+      await createAuditLog({
+        action: 'status_change',
+        resource_type: 'booking',
+        resource_id: bookingId,
+        old_data: oldBooking ? { status: oldBooking.status } : null,
+        new_data: { status: newStatus },
+      })
+    } catch (businessError) {
+      console.error('Booking status automation failed:', businessError)
     }
 
     setBookings(bookings.map(b => 
@@ -149,6 +203,8 @@ export function BookingsClient({ initialBookings, services, clients }: BookingsC
   const handleDeleteBooking = async (bookingId: string) => {
     const supabase = createClient()
     
+    const oldBooking = bookings.find((booking) => booking.id === bookingId)
+
     const { error } = await supabase
       .from('bookings')
       .delete()
@@ -158,6 +214,13 @@ export function BookingsClient({ initialBookings, services, clients }: BookingsC
       toast.error('Failed to delete booking')
       return
     }
+
+    await createAuditLog({
+      action: 'delete',
+      resource_type: 'booking',
+      resource_id: bookingId,
+      old_data: oldBooking || null,
+    })
 
     setBookings(bookings.filter(b => b.id !== bookingId))
     toast.success('Booking deleted')

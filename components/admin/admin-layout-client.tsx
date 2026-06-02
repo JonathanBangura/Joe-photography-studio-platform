@@ -55,8 +55,15 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import type { StudioRole, RolePermission } from '@/lib/types'
-import { ROLE_LABELS, type Module } from '@/lib/permissions'
+import type { StudioRole } from '@/lib/types'
+import {
+  ROLE_LABELS,
+  buildDefaultRolePermissions,
+  canAccessModuleSync,
+  type Module,
+  type RolePermission,
+} from '@/lib/permissions'
+import { PermissionGate } from '@/components/admin/permission-gate'
 
 type NavItem = {
   href: string
@@ -166,8 +173,10 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
         .order('role')
         .order('module')
       
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         setPermissions(data as RolePermission[])
+      } else {
+        setPermissions(buildDefaultRolePermissions())
       }
       setIsLoadingPermissions(false)
     }
@@ -182,11 +191,7 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => {
-          if (effectiveRole === 'super_admin') return true
-          const permission = permissions.find(
-            (p) => p.role === effectiveRole && p.module === item.module
-          )
-          return permission?.can_access === true
+          return canAccessModuleSync(permissions, effectiveRole, item.module)
         }),
       }))
       .filter((section) => section.items.length > 0)
@@ -403,7 +408,9 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
 
         {/* Page content */}
         <main className="flex-1 p-4 lg:p-6">
-          {children}
+          <PermissionGate role={effectiveRole} permissions={permissions} loading={isLoadingPermissions}>
+            {children}
+          </PermissionGate>
         </main>
       </div>
     </div>

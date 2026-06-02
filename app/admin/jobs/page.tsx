@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { createAuditLog } from '@/lib/audit-log-client'
+import { ensureDefaultWorkflowStages } from '@/lib/business-logic-client'
 import { toast } from 'sonner'
 import {
   ClipboardList,
@@ -67,9 +69,11 @@ interface Booking {
   notes: string | null
   client?: {
     id: string
-    full_name: string | null
-    email: string
-    avatar_url: string | null
+    profile?: {
+      full_name: string | null
+      email: string
+      avatar_url: string | null
+    }
   }
   service?: {
     id: string
@@ -118,10 +122,21 @@ export default function JobTrackerPage() {
   const supabase = createClient()
 
   useEffect(() => {
-    fetchStages()
-    fetchJobs()
-    fetchBookings()
+    initializeWorkflow()
   }, [])
+
+  const initializeWorkflow = async () => {
+    try {
+      const workflowStages = await ensureDefaultWorkflowStages()
+      setStages(workflowStages)
+      await fetchJobs()
+      await fetchBookings()
+    } catch (error) {
+      toast.error('Failed to initialize workflow stages')
+      console.error(error)
+      setLoading(false)
+    }
+  }
 
   const fetchStages = async () => {
     const { data, error } = await supabase
@@ -145,7 +160,7 @@ export default function JobTrackerPage() {
         current_stage:workflow_stages(*),
         booking:bookings(
           *,
-          client:profiles(*),
+          client:clients(*, profile:profiles(*)),
           service:services(*)
         )
       `)
@@ -173,7 +188,7 @@ export default function JobTrackerPage() {
       .from('bookings')
       .select(`
         *,
-        client:profiles(*),
+        client:clients(*, profile:profiles(*)),
         service:services(*)
       `)
       .eq('status', 'confirmed')
@@ -220,6 +235,13 @@ export default function JobTrackerPage() {
     if (error) {
       toast.error('Failed to move job')
     } else {
+      await createAuditLog({
+        action: 'status_change',
+        resource_type: 'job_workflow',
+        resource_id: jobId,
+        old_data: { current_stage_id: job.current_stage_id },
+        new_data: { current_stage_id: stageId, stage_name: stage?.name },
+      })
       toast.success(`Job moved to ${stage?.name}`)
       fetchJobs()
     }
@@ -250,6 +272,11 @@ export default function JobTrackerPage() {
       toast.error('Failed to create job')
       console.error(error)
     } else {
+      await createAuditLog({
+        action: 'create',
+        resource_type: 'job_workflow',
+        new_data: { booking_id: newJob.booking_id, stage_id: firstStage.id, priority: newJob.priority },
+      })
       toast.success('Job created successfully')
       setCreateDialogOpen(false)
       setNewJob({ booking_id: '', due_date: '', priority: 'medium', notes: '' })
@@ -267,6 +294,12 @@ export default function JobTrackerPage() {
     if (error) {
       toast.error('Failed to update priority')
     } else {
+      await createAuditLog({
+        action: 'update',
+        resource_type: 'job_workflow',
+        resource_id: jobId,
+        new_data: { priority },
+      })
       toast.success('Priority updated')
       fetchJobs()
     }
@@ -274,7 +307,7 @@ export default function JobTrackerPage() {
 
   const filteredJobs = jobs.filter((job) => {
     const matchesSearch =
-      job.booking?.client?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      job.booking?.client?.profile?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.booking?.service?.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStage = stageFilter === 'all' || job.current_stage_id === stageFilter
     const matchesPriority = priorityFilter === 'all' || job.priority === priorityFilter
@@ -435,13 +468,13 @@ export default function JobTrackerPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-6 w-6">
-                              <AvatarImage src={job.booking?.client?.avatar_url || ''} />
+                              <AvatarImage src={job.booking?.client?.profile?.avatar_url || ''} />
                               <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                                {job.booking?.client?.full_name?.charAt(0) || '?'}
+                                {job.booking?.client?.profile?.full_name?.charAt(0) || '?'}
                               </AvatarFallback>
                             </Avatar>
                             <span className="text-sm font-medium truncate max-w-[150px]">
-                              {job.booking?.client?.full_name || 'Unknown'}
+                              {job.booking?.client?.profile?.full_name || 'Unknown'}
                             </span>
                           </div>
                           <Badge
@@ -504,13 +537,13 @@ export default function JobTrackerPage() {
                 >
                   <div className="flex items-center gap-4">
                     <Avatar className="h-10 w-10">
-                      <AvatarImage src={job.booking?.client?.avatar_url || ''} />
+                      <AvatarImage src={job.booking?.client?.profile?.avatar_url || ''} />
                       <AvatarFallback className="bg-primary/10 text-primary">
-                        {job.booking?.client?.full_name?.charAt(0) || '?'}
+                        {job.booking?.client?.profile?.full_name?.charAt(0) || '?'}
                       </AvatarFallback>
                     </Avatar>
                     <div>
-                      <p className="font-medium">{job.booking?.client?.full_name || 'Unknown'}</p>
+                      <p className="font-medium">{job.booking?.client?.profile?.full_name || 'Unknown'}</p>
                       <p className="text-sm text-muted-foreground">{job.booking?.service?.name}</p>
                     </div>
                   </div>
@@ -569,7 +602,7 @@ export default function JobTrackerPage() {
           <DialogHeader>
             <DialogTitle>Move Job</DialogTitle>
             <DialogDescription>
-              Move {selectedJob?.booking?.client?.full_name}&apos;s job to a new stage
+              Move {selectedJob?.booking?.client?.profile?.full_name}&apos;s job to a new stage
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -614,7 +647,7 @@ export default function JobTrackerPage() {
                 <SelectContent>
                   {bookings.map((booking) => (
                     <SelectItem key={booking.id} value={booking.id}>
-                      {booking.client?.full_name} - {booking.service?.name} (
+                      {booking.client?.profile?.full_name} - {booking.service?.name} (
                       {new Date(booking.booking_date).toLocaleDateString()})
                     </SelectItem>
                   ))}

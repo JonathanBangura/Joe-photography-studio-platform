@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import type { StudioRole } from '@/lib/types'
+import { createAuditLog } from '@/lib/audit-log-client'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -34,20 +36,43 @@ export default function LoginPage() {
     }
 
     if (data.user) {
-      // Check user role to redirect appropriately
-      const { data: profile } = await supabase
+      // Check user role to redirect appropriately.
+      // Back-office access now uses profiles.studio_role, while profiles.role is kept only for legacy/client routing.
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, studio_role, is_active')
         .eq('id', data.user.id)
         .single()
 
-      toast.success('Welcome back!')
-      
-      if (profile?.role === 'admin' || profile?.role === 'staff') {
-        router.push('/admin')
-      } else {
-        router.push('/portal')
+      if (profileError || !profile) {
+        toast.error('Your profile could not be loaded. Please contact the administrator.')
+        await supabase.auth.signOut()
+        setIsLoading(false)
+        return
       }
+
+      if (profile.is_active === false) {
+        toast.error('Your account is inactive. Please contact the administrator.')
+        await supabase.auth.signOut()
+        setIsLoading(false)
+        return
+      }
+
+      await createAuditLog({
+        action: 'login',
+        resource_type: 'auth',
+        resource_id: data.user.id,
+        new_data: { email: data.user.email, role: profile.role, studio_role: profile.studio_role },
+      })
+
+      toast.success('Welcome back!')
+
+      const studioRole = profile.studio_role as StudioRole | null
+      const isBackOfficeUser = Boolean(
+        (studioRole && studioRole !== 'viewer') || profile.role === 'admin' || profile.role === 'staff'
+      )
+
+      router.push(isBackOfficeUser ? '/admin' : '/portal')
     }
   }
 

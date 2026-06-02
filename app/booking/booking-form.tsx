@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { createAuditLog } from '@/lib/audit-log-client'
+import { createInvoiceForBooking, createWorkflowForBooking } from '@/lib/business-logic-client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -72,7 +74,91 @@ export function BookingForm({ services, availability, blockedDates, clientInfo, 
         if (error) throw error
         setStep(4) // Success step
       } else {
-        // Handle logged in booking - would need client record
+        if (!selectedService || selectedService.id.startsWith('sample-')) {
+          throw new Error('Please select a valid service from the studio service list')
+        }
+
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser()
+
+        if (userError || !user) throw userError || new Error('User not found')
+
+        // Keep the profile updated with the latest contact details provided by the client.
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({
+            full_name: formData.name,
+            email: formData.email,
+            phone: formData.phone || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', user.id)
+
+        if (profileError) throw profileError
+
+        let clientId = clientInfo?.client?.id
+
+        if (!clientId) {
+          const { data: createdClient, error: clientError } = await supabase
+            .from('clients')
+            .insert({
+              profile_id: user.id,
+              address: formData.location || null,
+              preferred_contact: 'email',
+              notes: formData.notes || null,
+            })
+            .select('*')
+            .single()
+
+          if (clientError) throw clientError
+          clientId = createdClient.id
+        }
+
+        const selectedStart = new Date(`2000-01-01T${selectedTime}:00`)
+        selectedStart.setMinutes(selectedStart.getMinutes() + Number(selectedService.duration_minutes || 60))
+        const endTime = selectedStart.toTimeString().slice(0, 5)
+
+        const { data: booking, error: bookingError } = await supabase
+          .from('bookings')
+          .insert({
+            client_id: clientId,
+            service_id: selectedService.id,
+            booking_date: selectedDate,
+            start_time: selectedTime,
+            end_time: endTime,
+            location: formData.location || 'Studio',
+            status: 'pending',
+            total_amount: selectedService.base_price,
+            notes: formData.notes || null,
+          })
+          .select('*')
+          .single()
+
+        if (bookingError) throw bookingError
+
+        await createInvoiceForBooking({
+          bookingId: booking.id,
+          clientId,
+          totalAmount: Number(selectedService.base_price || 0),
+          notes: 'Auto-created from online booking request',
+        })
+
+        await createWorkflowForBooking({
+          bookingId: booking.id,
+          bookingDate: selectedDate,
+          priority: 'medium',
+          notes: 'Auto-created from online booking request',
+        })
+
+        await createAuditLog({
+          action: 'create',
+          resource_type: 'booking',
+          resource_id: booking.id,
+          new_data: booking,
+        })
+
         setStep(4)
       }
     } catch (error) {
