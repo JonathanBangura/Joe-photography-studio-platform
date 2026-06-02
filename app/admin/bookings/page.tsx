@@ -17,12 +17,20 @@ export default async function BookingsPage() {
   const { data: clients } = await supabase
     .from('clients')
     .select('*, profile:profiles(*)')
+    .order('created_at', { ascending: false })
+
+  const { data: staff } = await supabase
+    .from('profiles')
+    .select('id, full_name, email, studio_role')
+    .in('studio_role', ['photographer', 'studio_manager', 'studio_admin', 'super_admin'])
+    .eq('is_active', true)
 
   return (
     <BookingsClient 
       initialBookings={bookings || []} 
       services={services || []}
       clients={clients || []}
+      staff={staff || []}
     />
   )
 }
