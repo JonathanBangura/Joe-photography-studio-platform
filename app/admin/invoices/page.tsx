@@ -1,14 +1,33 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
+import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -16,147 +35,213 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { DollarSign, FileText, Clock, CheckCircle, Search, Download, Eye, Send, CreditCard } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
-import { recordPaymentAndSyncInvoice } from '@/lib/business-logic-client'
-import { createAuditLog } from '@/lib/audit-log-client'
-import { toast } from 'sonner'
+} from "@/components/ui/dialog";
+import {
+  DollarSign,
+  FileText,
+  Clock,
+  CheckCircle,
+  Search,
+  Download,
+  Eye,
+  Send,
+  CreditCard,
+  Printer,
+} from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { recordPaymentAndSyncInvoice } from "@/lib/business-logic-client";
+import { createAuditLog } from "@/lib/audit-log-client";
+import { toast } from "sonner";
 
 type InvoiceRecord = {
-  id: string
-  booking_id: string | null
-  client_id: string | null
-  invoice_number: string
-  amount: number
-  tax_amount: number | null
-  total_amount: number
-  payment_status: 'pending' | 'partial' | 'paid' | 'overdue' | 'cancelled'
-  due_date: string | null
-  paid_date: string | null
-  notes: string | null
-  created_at: string
-  updated_at: string
+  id: string;
+  booking_id: string | null;
+  client_id: string | null;
+  invoice_number: string;
+  amount: number;
+  tax_amount: number | null;
+  total_amount: number;
+  payment_status: "pending" | "partial" | "paid" | "overdue" | "cancelled";
+  due_date: string | null;
+  paid_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
   client?: {
-    id: string
+    id: string;
     profile?: {
-      full_name: string | null
-      email: string | null
-    }
-  } | null
+      full_name: string | null;
+      email: string | null;
+    };
+    full_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    address?: string | null;
+  } | null;
   booking?: {
-    id: string
-    booking_date: string
+    id: string;
+    booking_date: string;
     service?: {
-      name: string
-    } | null
-  } | null
-  payments?: Array<{ amount: number }>
-}
+      name: string;
+    } | null;
+  } | null;
+  payments?: Array<{ amount: number }>;
+};
 
 const statusStyles: Record<string, string> = {
-  paid: 'bg-green-500/20 text-green-500 border-green-500/30',
-  pending: 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30',
-  partial: 'bg-blue-500/20 text-blue-500 border-blue-500/30',
-  overdue: 'bg-orange-500/20 text-orange-500 border-orange-500/30',
-  cancelled: 'bg-red-500/20 text-red-500 border-red-500/30',
-}
+  paid: "bg-green-500/20 text-green-500 border-green-500/30",
+  pending: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
+  partial: "bg-blue-500/20 text-blue-500 border-blue-500/30",
+  overdue: "bg-orange-500/20 text-orange-500 border-orange-500/30",
+  cancelled: "bg-red-500/20 text-red-500 border-red-500/30",
+};
 
 export default function AdminInvoicesPage() {
-  const supabase = createClient()
-  const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRecord | null>(null)
-  const [paymentOpen, setPaymentOpen] = useState(false)
-  const [paymentLoading, setPaymentLoading] = useState(false)
+  const supabase = createClient();
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRecord | null>(
+    null,
+  );
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
-    amount: '',
-    payment_method: 'Cash',
-    transaction_id: '',
-    notes: '',
-  })
+    amount: "",
+    payment_method: "Cash",
+    transaction_id: "",
+    notes: "",
+  });
 
   useEffect(() => {
-    fetchInvoices()
-  }, [])
+    fetchInvoices();
+  }, []);
 
   async function fetchInvoices() {
-    setLoading(true)
+    setLoading(true);
     const { data, error } = await supabase
-      .from('invoices')
-      .select(`
+      .from("invoices")
+      .select(
+        `
         *,
         client:clients(*, profile:profiles(full_name, email)),
         booking:bookings(*, service:services(name)),
         payments(amount)
-      `)
-      .order('created_at', { ascending: false })
+      `,
+      )
+      .order("created_at", { ascending: false });
 
     if (error) {
-      toast.error('Failed to load invoices')
-      console.error(error)
+      toast.error("Failed to load invoices");
+      console.error(error);
     } else {
-      setInvoices((data || []) as InvoiceRecord[])
+      setInvoices((data || []) as InvoiceRecord[]);
     }
-    setLoading(false)
+    setLoading(false);
   }
 
   const invoicesWithDerivedStatus = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = new Date().toISOString().slice(0, 10);
 
     return invoices.map((invoice) => {
       const paidAmount = (invoice.payments || []).reduce(
         (sum, payment) => sum + Number(payment.amount || 0),
-        0
-      )
-      const balance = Number(invoice.total_amount || 0) - paidAmount
+        0,
+      );
+      const balance = Number(invoice.total_amount || 0) - paidAmount;
       const derivedStatus =
-        invoice.payment_status !== 'paid' && invoice.due_date && invoice.due_date < today
-          ? 'overdue'
-          : invoice.payment_status
+        invoice.payment_status !== "paid" &&
+        invoice.due_date &&
+        invoice.due_date < today
+          ? "overdue"
+          : invoice.payment_status;
 
-      return { ...invoice, paidAmount, balance, derivedStatus }
-    })
-  }, [invoices])
+      return { ...invoice, paidAmount, balance, derivedStatus };
+    });
+  }, [invoices]);
 
   const filteredInvoices = invoicesWithDerivedStatus.filter((invoice) => {
-    const clientName = invoice.client?.profile?.full_name || ''
+    const clientName = getClientName(invoice);
     const matchesSearch =
       clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      invoice.invoice_number.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || invoice.derivedStatus === statusFilter
-    return matchesSearch && matchesStatus
-  })
+      invoice.invoice_number.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesStatus =
+      statusFilter === "all" || invoice.derivedStatus === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
-  const totalRevenue = invoicesWithDerivedStatus.reduce((sum, invoice) => sum + invoice.paidAmount, 0)
+  const totalRevenue = invoicesWithDerivedStatus.reduce(
+    (sum, invoice) => sum + invoice.paidAmount,
+    0,
+  );
   const pendingAmount = invoicesWithDerivedStatus.reduce(
     (sum, invoice) => sum + Math.max(invoice.balance, 0),
-    0
-  )
+    0,
+  );
+
+  function getClientName(invoice: InvoiceRecord) {
+    return (
+      invoice.client?.full_name ||
+      invoice.client?.profile?.full_name ||
+      invoice.client?.email ||
+      invoice.client?.profile?.email ||
+      "Unknown"
+    );
+  }
+
+  function getClientEmail(invoice: InvoiceRecord) {
+    return invoice.client?.email || invoice.client?.profile?.email || "";
+  }
+
+  function openInvoiceDialog(invoice: InvoiceRecord) {
+    setSelectedInvoice(invoice);
+    setViewOpen(true);
+  }
+
+  function downloadInvoice(
+    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+  ) {
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${invoice.invoice_number}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111}.header{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:24px}.row{display:flex;justify-content:space-between;margin:8px 0}.total{font-weight:bold;font-size:18px;border-top:1px solid #ddd;padding-top:12px;margin-top:12px}</style></head><body><div class="header"><div><h1>Invoice</h1><p>${invoice.invoice_number}</p></div><div><strong>Joe Photography Studio</strong><p>${new Date(invoice.created_at).toLocaleDateString()}</p></div></div><h3>Bill To</h3><p>${getClientName(invoice)}<br>${getClientEmail(invoice)}</p><h3>Details</h3><div class="row"><span>Service</span><span>${invoice.booking?.service?.name || "Photography Service"}</span></div><div class="row"><span>Booking Date</span><span>${invoice.booking?.booking_date ? new Date(invoice.booking.booking_date).toLocaleDateString() : "-"}</span></div><div class="row"><span>Subtotal</span><span>$${Number(invoice.amount || 0).toLocaleString()}</span></div><div class="row"><span>Tax</span><span>$${Number(invoice.tax_amount || 0).toLocaleString()}</span></div><div class="row total"><span>Total</span><span>$${Number(invoice.total_amount || 0).toLocaleString()}</span></div><div class="row"><span>Paid</span><span>$${Number(invoice.paidAmount || 0).toLocaleString()}</span></div><div class="row"><span>Balance</span><span>$${Math.max(Number(invoice.balance || 0), 0).toLocaleString()}</span></div></body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${invoice.invoice_number}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function printInvoice() {
+    window.print();
+  }
 
   function openPaymentDialog(invoice: InvoiceRecord & { balance?: number }) {
-    setSelectedInvoice(invoice)
+    setSelectedInvoice(invoice);
     setPaymentForm({
-      amount: String(Math.max(Number(invoice.balance || invoice.total_amount || 0), 0)),
-      payment_method: 'Cash',
-      transaction_id: '',
-      notes: '',
-    })
-    setPaymentOpen(true)
+      amount: String(
+        Math.max(Number(invoice.balance || invoice.total_amount || 0), 0),
+      ),
+      payment_method: "Cash",
+      transaction_id: "",
+      notes: "",
+    });
+    setPaymentOpen(true);
   }
 
   async function handleRecordPayment() {
-    if (!selectedInvoice) return
-    const amount = Number(paymentForm.amount)
+    if (!selectedInvoice) return;
+    const amount = Number(paymentForm.amount);
 
     if (!amount || amount <= 0) {
-      toast.error('Enter a valid payment amount')
-      return
+      toast.error("Enter a valid payment amount");
+      return;
     }
 
-    setPaymentLoading(true)
+    setPaymentLoading(true);
     try {
       await recordPaymentAndSyncInvoice({
         invoiceId: selectedInvoice.id,
@@ -164,26 +249,28 @@ export default function AdminInvoicesPage() {
         paymentMethod: paymentForm.payment_method,
         transactionId: paymentForm.transaction_id || null,
         notes: paymentForm.notes || null,
-      })
-      toast.success('Payment recorded and invoice updated')
-      setPaymentOpen(false)
-      await fetchInvoices()
+      });
+      toast.success("Payment recorded and invoice updated");
+      setPaymentOpen(false);
+      await fetchInvoices();
     } catch (error) {
-      console.error(error)
-      toast.error('Failed to record payment')
+      console.error(error);
+      toast.error("Failed to record payment");
     } finally {
-      setPaymentLoading(false)
+      setPaymentLoading(false);
     }
   }
 
   async function handleSendInvoice(invoice: InvoiceRecord) {
     await createAuditLog({
-      action: 'send_invoice',
-      resource_type: 'invoice',
+      action: "send_invoice",
+      resource_type: "invoice",
       resource_id: invoice.id,
       new_data: { invoice_number: invoice.invoice_number },
-    })
-    toast.success('Invoice send action logged. Email service can be connected later.')
+    });
+    toast.success(
+      "Invoice send action logged. Email service can be connected later.",
+    );
   }
 
   return (
@@ -191,7 +278,9 @@ export default function AdminInvoicesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Invoices</h1>
-          <p className="text-muted-foreground">Manage real invoice balances and payment records</p>
+          <p className="text-muted-foreground">
+            Manage real invoice balances and payment records
+          </p>
         </div>
         <Button variant="outline" onClick={fetchInvoices} disabled={loading}>
           Refresh
@@ -201,12 +290,18 @@ export default function AdminInvoicesPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Collected Revenue</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Collected Revenue
+            </CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">from recorded payments</p>
+            <div className="text-2xl font-bold">
+              ${totalRevenue.toLocaleString()}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              from recorded payments
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -215,7 +310,9 @@ export default function AdminInvoicesPage() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${pendingAmount.toLocaleString()}</div>
+            <div className="text-2xl font-bold">
+              ${pendingAmount.toLocaleString()}
+            </div>
             <p className="text-xs text-muted-foreground">remaining balances</p>
           </CardContent>
         </Card>
@@ -225,13 +322,21 @@ export default function AdminInvoicesPage() {
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{invoicesWithDerivedStatus.filter((i) => i.payment_status === 'paid').length}</div>
+            <div className="text-2xl font-bold">
+              {
+                invoicesWithDerivedStatus.filter(
+                  (i) => i.payment_status === "paid",
+                ).length
+              }
+            </div>
             <p className="text-xs text-muted-foreground">fully paid invoices</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Invoices</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total Invoices
+            </CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -246,7 +351,9 @@ export default function AdminInvoicesPage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>All Invoices</CardTitle>
-              <CardDescription>Invoices are auto-created when bookings are created</CardDescription>
+              <CardDescription>
+                Invoices are auto-created when bookings are created
+              </CardDescription>
             </div>
             <div className="flex items-center gap-4">
               <div className="relative">
@@ -292,33 +399,71 @@ export default function AdminInvoicesPage() {
             <TableBody>
               {filteredInvoices.map((invoice) => (
                 <TableRow key={invoice.id}>
-                  <TableCell className="font-mono font-medium">{invoice.invoice_number}</TableCell>
-                  <TableCell>{invoice.client?.profile?.full_name || 'Unknown'}</TableCell>
-                  <TableCell>{invoice.booking?.service?.name || 'N/A'}</TableCell>
-                  <TableCell>{invoice.booking?.booking_date ? new Date(invoice.booking.booking_date).toLocaleDateString() : '-'}</TableCell>
-                  <TableCell className="font-semibold">${Number(invoice.total_amount || 0).toLocaleString()}</TableCell>
-                  <TableCell>${invoice.paidAmount.toLocaleString()}</TableCell>
-                  <TableCell>${Math.max(invoice.balance, 0).toLocaleString()}</TableCell>
+                  <TableCell className="font-mono font-medium">
+                    {invoice.invoice_number}
+                  </TableCell>
+                  <TableCell>{getClientName(invoice)}</TableCell>
                   <TableCell>
-                    <Badge className={statusStyles[invoice.derivedStatus]} variant="outline">
-                      {invoice.derivedStatus.charAt(0).toUpperCase() + invoice.derivedStatus.slice(1)}
+                    {invoice.booking?.service?.name || "N/A"}
+                  </TableCell>
+                  <TableCell>
+                    {invoice.booking?.booking_date
+                      ? new Date(
+                          invoice.booking.booking_date,
+                        ).toLocaleDateString()
+                      : "-"}
+                  </TableCell>
+                  <TableCell className="font-semibold">
+                    ${Number(invoice.total_amount || 0).toLocaleString()}
+                  </TableCell>
+                  <TableCell>${invoice.paidAmount.toLocaleString()}</TableCell>
+                  <TableCell>
+                    ${Math.max(invoice.balance, 0).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      className={statusStyles[invoice.derivedStatus]}
+                      variant="outline"
+                    >
+                      {invoice.derivedStatus.charAt(0).toUpperCase() +
+                        invoice.derivedStatus.slice(1)}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon" title="View">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="View"
+                        onClick={() => openInvoiceDialog(invoice)}
+                      >
                         <Eye className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" title="Download PDF">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Download Invoice"
+                        onClick={() => downloadInvoice(invoice)}
+                      >
                         <Download className="h-4 w-4" />
                       </Button>
-                      {invoice.payment_status !== 'paid' && (
-                        <Button variant="ghost" size="icon" title="Record Payment" onClick={() => openPaymentDialog(invoice)}>
+                      {invoice.payment_status !== "paid" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Record Payment"
+                          onClick={() => openPaymentDialog(invoice)}
+                        >
                           <CreditCard className="h-4 w-4" />
                         </Button>
                       )}
-                      {invoice.payment_status !== 'paid' && (
-                        <Button variant="ghost" size="icon" title="Send Reminder" onClick={() => handleSendInvoice(invoice)}>
+                      {invoice.payment_status !== "paid" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Send Reminder"
+                          onClick={() => handleSendInvoice(invoice)}
+                        >
                           <Send className="h-4 w-4" />
                         </Button>
                       )}
@@ -328,8 +473,11 @@ export default function AdminInvoicesPage() {
               ))}
               {filteredInvoices.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
-                    {loading ? 'Loading invoices...' : 'No invoices found'}
+                  <TableCell
+                    colSpan={9}
+                    className="py-10 text-center text-muted-foreground"
+                  >
+                    {loading ? "Loading invoices..." : "No invoices found"}
                   </TableCell>
                 </TableRow>
               )}
@@ -337,6 +485,146 @@ export default function AdminInvoicesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Invoice Details</DialogTitle>
+            <DialogDescription>
+              {selectedInvoice?.invoice_number}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedInvoice && (
+            <div className="space-y-6" id="invoice-print-area">
+              <div className="flex items-start justify-between border-b pb-4">
+                <div>
+                  <h2 className="text-2xl font-bold">Joe Photography Studio</h2>
+                  <p className="text-muted-foreground">Photography Invoice</p>
+                </div>
+                <div className="text-right">
+                  <p className="font-mono font-semibold">
+                    {selectedInvoice.invoice_number}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Issued{" "}
+                    {new Date(selectedInvoice.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Client</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm">
+                    <p className="font-medium">
+                      {getClientName(selectedInvoice)}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {getClientEmail(selectedInvoice) || "No email"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {selectedInvoice.client?.phone || ""}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Booking</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm">
+                    <p>
+                      {selectedInvoice.booking?.service?.name ||
+                        "Photography Service"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {selectedInvoice.booking?.booking_date
+                        ? new Date(
+                            selectedInvoice.booking.booking_date,
+                          ).toLocaleDateString()
+                        : "-"}
+                    </p>
+                    <Badge
+                      className={statusStyles[selectedInvoice.payment_status]}
+                      variant="outline"
+                    >
+                      {selectedInvoice.payment_status}
+                    </Badge>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <span>
+                    ${Number(selectedInvoice.amount || 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tax</span>
+                  <span>
+                    ${Number(selectedInvoice.tax_amount || 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between font-bold text-lg border-t pt-3">
+                  <span>Total</span>
+                  <span>
+                    $
+                    {Number(selectedInvoice.total_amount || 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Paid</span>
+                  <span>
+                    $
+                    {Number(
+                      (selectedInvoice as any).paidAmount || 0,
+                    ).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Balance</span>
+                  <span>
+                    $
+                    {Math.max(
+                      Number((selectedInvoice as any).balance || 0),
+                      0,
+                    ).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {selectedInvoice && (
+              <Button
+                variant="outline"
+                onClick={() => downloadInvoice(selectedInvoice as any)}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            )}
+            <Button variant="outline" onClick={printInvoice}>
+              <Printer className="h-4 w-4 mr-2" />
+              Print
+            </Button>
+            {selectedInvoice && selectedInvoice.payment_status !== "paid" && (
+              <Button
+                onClick={() => {
+                  setViewOpen(false);
+                  openPaymentDialog(selectedInvoice as any);
+                }}
+              >
+                <CreditCard className="h-4 w-4 mr-2" />
+                Record Payment
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
         <DialogContent>
@@ -354,14 +642,18 @@ export default function AdminInvoicesPage() {
                 min="0"
                 step="0.01"
                 value={paymentForm.amount}
-                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                onChange={(e) =>
+                  setPaymentForm({ ...paymentForm, amount: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
               <Label>Payment Method</Label>
               <Select
                 value={paymentForm.payment_method}
-                onValueChange={(value) => setPaymentForm({ ...paymentForm, payment_method: value })}
+                onValueChange={(value) =>
+                  setPaymentForm({ ...paymentForm, payment_method: value })
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -371,7 +663,9 @@ export default function AdminInvoicesPage() {
                   <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
                   <SelectItem value="Orange Money">Orange Money</SelectItem>
                   <SelectItem value="Afrimoney">Afrimoney</SelectItem>
-                  <SelectItem value="Online Transfer">Online Transfer</SelectItem>
+                  <SelectItem value="Online Transfer">
+                    Online Transfer
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -379,7 +673,12 @@ export default function AdminInvoicesPage() {
               <Label>Transaction Reference</Label>
               <Input
                 value={paymentForm.transaction_id}
-                onChange={(e) => setPaymentForm({ ...paymentForm, transaction_id: e.target.value })}
+                onChange={(e) =>
+                  setPaymentForm({
+                    ...paymentForm,
+                    transaction_id: e.target.value,
+                  })
+                }
                 placeholder="Optional reference"
               />
             </div>
@@ -387,7 +686,9 @@ export default function AdminInvoicesPage() {
               <Label>Notes</Label>
               <Textarea
                 value={paymentForm.notes}
-                onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                onChange={(e) =>
+                  setPaymentForm({ ...paymentForm, notes: e.target.value })
+                }
                 placeholder="Optional notes"
               />
             </div>
@@ -397,11 +698,11 @@ export default function AdminInvoicesPage() {
               Cancel
             </Button>
             <Button onClick={handleRecordPayment} disabled={paymentLoading}>
-              {paymentLoading ? 'Recording...' : 'Record Payment'}
+              {paymentLoading ? "Recording..." : "Record Payment"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
