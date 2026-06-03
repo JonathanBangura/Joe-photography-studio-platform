@@ -153,8 +153,8 @@ export default function AdminInvoicesPage() {
       const balance = Number(invoice.total_amount || 0) - paidAmount;
       const derivedStatus =
         invoice.payment_status !== "paid" &&
-        invoice.due_date &&
-        invoice.due_date < today
+          invoice.due_date &&
+          invoice.due_date < today
           ? "overdue"
           : invoice.payment_status;
 
@@ -203,12 +203,87 @@ export default function AdminInvoicesPage() {
   function downloadInvoice(
     invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
   ) {
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${invoice.invoice_number}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111}.header{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:24px}.row{display:flex;justify-content:space-between;margin:8px 0}.total{font-weight:bold;font-size:18px;border-top:1px solid #ddd;padding-top:12px;margin-top:12px}</style></head><body><div class="header"><div><h1>Invoice</h1><p>${invoice.invoice_number}</p></div><div><strong>Joe Photography Studio</strong><p>${new Date(invoice.created_at).toLocaleDateString()}</p></div></div><h3>Bill To</h3><p>${getClientName(invoice)}<br>${getClientEmail(invoice)}</p><h3>Details</h3><div class="row"><span>Service</span><span>${invoice.booking?.service?.name || "Photography Service"}</span></div><div class="row"><span>Booking Date</span><span>${invoice.booking?.booking_date ? new Date(invoice.booking.booking_date).toLocaleDateString() : "-"}</span></div><div class="row"><span>Subtotal</span><span>$${Number(invoice.amount || 0).toLocaleString()}</span></div><div class="row"><span>Tax</span><span>$${Number(invoice.tax_amount || 0).toLocaleString()}</span></div><div class="row total"><span>Total</span><span>$${Number(invoice.total_amount || 0).toLocaleString()}</span></div><div class="row"><span>Paid</span><span>$${Number(invoice.paidAmount || 0).toLocaleString()}</span></div><div class="row"><span>Balance</span><span>$${Math.max(Number(invoice.balance || 0), 0).toLocaleString()}</span></div></body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
+    const paid = Number(invoice.paidAmount || 0);
+    const balance = Math.max(Number(invoice.balance || 0), 0);
+    const service = invoice.booking?.service?.name || "Photography Service";
+    const bookingDate = invoice.booking?.booking_date
+      ? new Date(invoice.booking.booking_date).toLocaleDateString()
+      : "-";
+
+    const lines = [
+      "JOE PHOTOGRAPHY STUDIO",
+      "INVOICE",
+      "",
+      `Invoice Number: ${invoice.invoice_number}`,
+      `Issue Date: ${new Date(invoice.created_at).toLocaleDateString()}`,
+      `Status: ${invoice.payment_status.toUpperCase()}`,
+      "",
+      "BILL TO",
+      `Client: ${getClientName(invoice)}`,
+      `Email: ${getClientEmail(invoice) || "N/A"}`,
+      `Phone: ${invoice.client?.phone || "N/A"}`,
+      "",
+      "BOOKING DETAILS",
+      `Service: ${service}`,
+      `Booking Date: ${bookingDate}`,
+      "",
+      "PAYMENT SUMMARY",
+      `Subtotal: $${Number(invoice.amount || 0).toLocaleString()}`,
+      `Tax: $${Number(invoice.tax_amount || 0).toLocaleString()}`,
+      `Total: $${Number(invoice.total_amount || 0).toLocaleString()}`,
+      `Paid: $${paid.toLocaleString()}`,
+      `Balance: $${balance.toLocaleString()}`,
+      "",
+      "Thank you for choosing Joe Photography Studio.",
+    ];
+
+    const escapePdfText = (value: string) =>
+      value
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201c\u201d]/g, '"')
+        .replace(/[\u2013\u2014]/g, "-")
+        .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\(/g, "\\(")
+        .replace(/\)/g, "\\)");
+
+    const textCommands = lines
+      .map((line, index) => {
+        const fontSize = index === 0 ? 18 : index === 1 ? 16 : 11;
+        const y = 760 - index * 24;
+        return `BT /F1 ${fontSize} Tf 50 ${y} Td (${escapePdfText(line)}) Tj ET`;
+      })
+      .join("\n");
+
+    const objects = [
+      "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+      "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+      "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj",
+      "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+      `5 0 obj << /Length ${textCommands.length} >> stream\n${textCommands}\nendstream endobj`,
+    ];
+
+    let pdf = "%PDF-1.4\n";
+    const offsets = [0];
+
+    objects.forEach((object) => {
+      offsets.push(pdf.length);
+      pdf += `${object}\n`;
+    });
+
+    const xrefOffset = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n`;
+    pdf += "0000000000 65535 f \n";
+    offsets.slice(1).forEach((offset) => {
+      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    });
+    pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+    const blob = new Blob([pdf], { type: "application/pdf" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${invoice.invoice_number}.html`;
+    a.download = `${invoice.invoice_number}.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -409,8 +484,8 @@ export default function AdminInvoicesPage() {
                   <TableCell>
                     {invoice.booking?.booking_date
                       ? new Date(
-                          invoice.booking.booking_date,
-                        ).toLocaleDateString()
+                        invoice.booking.booking_date,
+                      ).toLocaleDateString()
                       : "-"}
                   </TableCell>
                   <TableCell className="font-semibold">
@@ -541,8 +616,8 @@ export default function AdminInvoicesPage() {
                     <p className="text-muted-foreground">
                       {selectedInvoice.booking?.booking_date
                         ? new Date(
-                            selectedInvoice.booking.booking_date,
-                          ).toLocaleDateString()
+                          selectedInvoice.booking.booking_date,
+                        ).toLocaleDateString()
                         : "-"}
                     </p>
                     <Badge
