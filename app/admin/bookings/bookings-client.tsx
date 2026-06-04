@@ -105,6 +105,30 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [clientMode, setClientMode] = useState<'existing' | 'new'>('new')
+  const [selectedBooking, setSelectedBooking] = useState<ExtendedBooking | null>(null)
+  const [isViewOpen, setIsViewOpen] = useState(false)
+  const [isEditOpen, setIsEditOpen] = useState(false)
+  const [editBooking, setEditBooking] = useState({
+    id: '',
+    booking_date: '',
+    start_time: '',
+    end_time: '',
+    status: 'pending',
+    staff_id: '',
+    resource_id: '',
+    booking_environment: 'indoor',
+    privacy_level: 'shared',
+    location: '',
+    total_amount: '',
+    deposit_percentage: '50',
+    deposit_required_amount: '',
+    deposit_paid_amount: '',
+    deposit_payment_method: '',
+    deposit_status: 'required',
+    notes: '',
+    availability_override: false,
+    override_reason: '',
+  })
 
   const [newBooking, setNewBooking] = useState({
     existing_client_id: '',
@@ -235,6 +259,125 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     } finally {
       setIsLoading(false)
     }
+  }
+
+
+  const handleViewBooking = (booking: ExtendedBooking) => {
+    setSelectedBooking(booking)
+    setIsViewOpen(true)
+  }
+
+  const handleEditBooking = (booking: ExtendedBooking) => {
+    setSelectedBooking(booking)
+    setEditBooking({
+      id: booking.id,
+      booking_date: booking.booking_date || '',
+      start_time: booking.start_time?.slice(0, 5) || '',
+      end_time: booking.end_time?.slice(0, 5) || '',
+      status: booking.status || 'pending',
+      staff_id: booking.staff_id || '',
+      resource_id: booking.resource_id || '',
+      booking_environment: booking.booking_environment || 'indoor',
+      privacy_level: booking.privacy_level || 'shared',
+      location: booking.location || '',
+      total_amount: String(booking.total_amount || ''),
+      deposit_percentage: String(booking.deposit_percentage || 50),
+      deposit_required_amount: String(booking.deposit_required_amount || 0),
+      deposit_paid_amount: String(booking.deposit_paid_amount || 0),
+      deposit_payment_method: booking.deposit_payment_method || '',
+      deposit_status: booking.deposit_status || 'required',
+      notes: booking.notes || '',
+      availability_override: Boolean(booking.availability_override),
+      override_reason: booking.override_reason || '',
+    })
+    setIsEditOpen(true)
+  }
+
+  const handleSaveBooking = async () => {
+    if (!editBooking.id) return
+    if (!editBooking.booking_date || !editBooking.start_time || !editBooking.end_time) {
+      toast.error('Please enter date, start time and end time')
+      return
+    }
+
+    setIsLoading(true)
+    const supabase = createClient()
+    const oldBooking = bookings.find((booking) => booking.id === editBooking.id)
+
+    const totalAmountValue = Number(editBooking.total_amount || 0)
+    const depositPercentageValue = Number(editBooking.deposit_percentage || 0)
+    const depositRequiredValue = editBooking.deposit_required_amount
+      ? Number(editBooking.deposit_required_amount)
+      : Number(((totalAmountValue * depositPercentageValue) / 100).toFixed(2))
+    const depositPaidValue = Number(editBooking.deposit_paid_amount || 0)
+    const depositStatusValue = editBooking.deposit_status || (
+      depositPaidValue <= 0 ? 'required' : depositPaidValue >= depositRequiredValue ? 'paid' : 'partial'
+    )
+
+    const payload = {
+      booking_date: editBooking.booking_date,
+      start_time: editBooking.start_time,
+      end_time: editBooking.end_time,
+      status: editBooking.status,
+      staff_id: editBooking.staff_id || null,
+      resource_id: editBooking.resource_id || null,
+      booking_environment: editBooking.booking_environment,
+      privacy_level: editBooking.privacy_level,
+      locks_indoor_studio: editBooking.booking_environment === 'indoor' && editBooking.privacy_level === 'private',
+      location: editBooking.location || null,
+      total_amount: totalAmountValue,
+      deposit_percentage: depositPercentageValue,
+      deposit_required_amount: depositRequiredValue,
+      deposit_paid_amount: depositPaidValue,
+      deposit_payment_method: editBooking.deposit_payment_method || null,
+      deposit_status: depositStatusValue,
+      notes: editBooking.notes || null,
+      availability_override: editBooking.availability_override,
+      override_reason: editBooking.override_reason || null,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { error } = await supabase.from('bookings').update(payload).eq('id', editBooking.id)
+
+    if (error) {
+      console.error('Update booking error:', error)
+      toast.error(error.message || 'Failed to update booking')
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      await createAuditLog({
+        action: 'update',
+        resource_type: 'booking',
+        resource_id: editBooking.id,
+        old_data: oldBooking || null,
+        new_data: payload,
+      })
+      if (editBooking.status === 'confirmed') await moveBookingWorkflowToStage(editBooking.id, 'Shoot Scheduled', 'Booking confirmed')
+      if (editBooking.status === 'completed') await moveBookingWorkflowToStage(editBooking.id, 'Job Closed', 'Booking completed')
+    } catch (businessError) {
+      console.error('Booking update automation failed:', businessError)
+    }
+
+    const updatedBookings = bookings.map((booking) => {
+      if (booking.id !== editBooking.id) return booking
+      return {
+        ...booking,
+        ...payload,
+        status: payload.status as Booking['status'],
+        staff: staff.find((member) => member.id === payload.staff_id) || null,
+        resource: resources.find((resource) => resource.id === payload.resource_id) || null,
+      } as ExtendedBooking
+    })
+
+    setBookings(updatedBookings)
+    const updatedSelected = updatedBookings.find((booking) => booking.id === editBooking.id) || null
+    setSelectedBooking(updatedSelected)
+    setIsEditOpen(false)
+    toast.success('Booking updated successfully')
+    router.refresh()
+    setIsLoading(false)
   }
 
   const handleUpdateStatus = async (bookingId: string, newStatus: string) => {
@@ -526,8 +669,8 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem><Eye className="w-4 h-4 mr-2" />View Details</DropdownMenuItem>
-                            <DropdownMenuItem><Edit className="w-4 h-4 mr-2" />Edit Booking</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleViewBooking(booking)}><Eye className="w-4 h-4 mr-2" />View Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleEditBooking(booking)}><Edit className="w-4 h-4 mr-2" />Edit Booking</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'confirmed')} disabled={booking.status === 'confirmed'}>Confirm</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'completed')} disabled={booking.status === 'completed'}>Mark Complete</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleDeleteBooking(booking.id)} className="text-destructive"><Trash2 className="w-4 h-4 mr-2" />Delete</DropdownMenuItem>
@@ -542,6 +685,176 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isViewOpen} onOpenChange={setIsViewOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Booking Details</DialogTitle>
+            <DialogDescription>{selectedBooking?.booking_reference || 'View booking information'}</DialogDescription>
+          </DialogHeader>
+          {selectedBooking && (
+            <div className="space-y-5 py-2">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="rounded-lg border p-4 space-y-2">
+                  <h3 className="font-semibold">Client</h3>
+                  <p className="font-medium">{getClientName(selectedBooking.client)}</p>
+                  <p className="text-sm text-muted-foreground">{getClientEmail(selectedBooking.client) || 'No email'}</p>
+                  <p className="text-sm text-muted-foreground">{selectedBooking.client?.phone || selectedBooking.client?.profile?.phone || 'No phone'}</p>
+                </div>
+                <div className="rounded-lg border p-4 space-y-2">
+                  <h3 className="font-semibold">Package</h3>
+                  <p className="font-medium">{selectedBooking.service?.name || 'N/A'}</p>
+                  <p className="text-sm text-muted-foreground">Total: ${Number(selectedBooking.total_amount || 0).toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground">Status: {selectedBooking.status?.replace('_', ' ')}</p>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="rounded-lg border p-4 space-y-2">
+                  <h3 className="font-semibold">Schedule</h3>
+                  <p>{new Date(selectedBooking.booking_date).toLocaleDateString()}</p>
+                  <p className="text-sm text-muted-foreground">{selectedBooking.start_time?.slice(0, 5)} - {selectedBooking.end_time?.slice(0, 5)}</p>
+                  <p className="text-sm text-muted-foreground">Photographer: {selectedBooking.staff?.full_name || 'Unassigned'}</p>
+                </div>
+                <div className="rounded-lg border p-4 space-y-2">
+                  <h3 className="font-semibold">Studio Resource</h3>
+                  <p>{selectedBooking.resource?.name || 'No resource assigned'}</p>
+                  <p className="text-sm text-muted-foreground">Environment: {selectedBooking.booking_environment || 'indoor'}</p>
+                  <p className="text-sm text-muted-foreground">Privacy: {selectedBooking.privacy_level || 'shared'}</p>
+                  {selectedBooking.locks_indoor_studio && <p className="text-sm text-amber-600">Private booking locks the indoor studio.</p>}
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-4 space-y-2">
+                <h3 className="font-semibold">Deposit</h3>
+                <div className="grid sm:grid-cols-4 gap-3 text-sm">
+                  <div><span className="text-muted-foreground">Required</span><p className="font-medium">${Number(selectedBooking.deposit_required_amount || 0).toLocaleString()}</p></div>
+                  <div><span className="text-muted-foreground">Paid</span><p className="font-medium">${Number(selectedBooking.deposit_paid_amount || 0).toLocaleString()}</p></div>
+                  <div><span className="text-muted-foreground">Method</span><p className="font-medium capitalize">{selectedBooking.deposit_payment_method?.replace('_', ' ') || 'N/A'}</p></div>
+                  <div><span className="text-muted-foreground">Status</span><p className="font-medium capitalize">{selectedBooking.deposit_status || 'required'}</p></div>
+                </div>
+              </div>
+
+              {selectedBooking.notes && (
+                <div className="rounded-lg border p-4 space-y-2">
+                  <h3 className="font-semibold">Notes</h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{selectedBooking.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsViewOpen(false)}>Close</Button>
+            {selectedBooking && <Button onClick={() => handleEditBooking(selectedBooking)}>Edit Booking</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Booking</DialogTitle>
+            <DialogDescription>Update schedule, photographer, resource, status and deposit information.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5 py-2">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="space-y-2"><Label>Date *</Label><Input type="date" value={editBooking.booking_date} onChange={(e) => setEditBooking({ ...editBooking, booking_date: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Start *</Label><Input type="time" value={editBooking.start_time} onChange={(e) => setEditBooking({ ...editBooking, start_time: e.target.value })} /></div>
+              <div className="space-y-2"><Label>End *</Label><Input type="time" value={editBooking.end_time} onChange={(e) => setEditBooking({ ...editBooking, end_time: e.target.value })} /></div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={editBooking.status} onValueChange={(value) => setEditBooking({ ...editBooking, status: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="confirmed">Confirmed</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Photographer</Label>
+                <Select value={editBooking.staff_id} onValueChange={(value) => setEditBooking({ ...editBooking, staff_id: value })}>
+                  <SelectTrigger><SelectValue placeholder="Assign photographer" /></SelectTrigger>
+                  <SelectContent>{staff.map((member) => <SelectItem key={member.id} value={member.id}>{member.full_name || member.email}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-4 space-y-4">
+              <div className="font-medium">Resource & Privacy</div>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Environment</Label>
+                  <Select value={editBooking.booking_environment} onValueChange={(value) => setEditBooking({ ...editBooking, booking_environment: value, privacy_level: value === 'indoor' ? editBooking.privacy_level : 'shared', resource_id: '' })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="indoor">Indoor Studio</SelectItem><SelectItem value="outdoor">Outdoor Shoot</SelectItem><SelectItem value="event">Event Coverage</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Privacy</Label>
+                  <Select value={editBooking.privacy_level} onValueChange={(value) => setEditBooking({ ...editBooking, privacy_level: value, resource_id: '' })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="shared">Shared Resource</SelectItem><SelectItem value="private" disabled={editBooking.booking_environment !== 'indoor'}>Private Indoor Studio Lock</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Resource</Label>
+                  <Select value={editBooking.resource_id} onValueChange={(value) => setEditBooking({ ...editBooking, resource_id: value })}>
+                    <SelectTrigger><SelectValue placeholder="Select resource" /></SelectTrigger>
+                    <SelectContent>
+                      {resources.filter((resource) => editBooking.booking_environment === 'indoor' ? resource.type === 'indoor' || resource.type === 'desk' : resource.type === editBooking.booking_environment).map((resource) => (
+                        <SelectItem key={resource.id} value={resource.id}>{resource.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={editBooking.availability_override} onChange={(event) => setEditBooking({ ...editBooking, availability_override: event.target.checked })} className="mt-1" />
+                <span>Allow override if this resource/time conflicts.</span>
+              </label>
+              {editBooking.availability_override && <Input placeholder="Override reason" value={editBooking.override_reason} onChange={(e) => setEditBooking({ ...editBooking, override_reason: e.target.value })} />}
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="space-y-2"><Label>Total Amount</Label><Input type="number" value={editBooking.total_amount} onChange={(e) => setEditBooking({ ...editBooking, total_amount: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Deposit %</Label><Input type="number" value={editBooking.deposit_percentage} onChange={(e) => setEditBooking({ ...editBooking, deposit_percentage: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Deposit Required</Label><Input type="number" value={editBooking.deposit_required_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_required_amount: e.target.value })} /></div>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="space-y-2"><Label>Deposit Paid</Label><Input type="number" value={editBooking.deposit_paid_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_paid_amount: e.target.value })} /></div>
+              <div className="space-y-2">
+                <Label>Deposit Status</Label>
+                <Select value={editBooking.deposit_status} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_status: value })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="required">Required</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="waived">Waived</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={editBooking.deposit_payment_method} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_payment_method: value })}>
+                  <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                  <SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="vult_mastercard">Vult Mastercard</SelectItem><SelectItem value="orange_money">Orange Money</SelectItem><SelectItem value="afrimoney">Afrimoney</SelectItem><SelectItem value="bank_transfer">Bank Transfer</SelectItem></SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2"><Label>Location</Label><Input value={editBooking.location} onChange={(e) => setEditBooking({ ...editBooking, location: e.target.value })} /></div>
+            <div className="space-y-2"><Label>Notes</Label><Textarea value={editBooking.notes} onChange={(e) => setEditBooking({ ...editBooking, notes: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveBooking} disabled={isLoading}>{isLoading ? 'Saving...' : 'Save Changes'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
