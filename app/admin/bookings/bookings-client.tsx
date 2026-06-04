@@ -25,6 +25,13 @@ interface StaffOption {
   studio_role: string | null
 }
 
+interface StudioResource {
+  id: string
+  name: string
+  type: 'indoor' | 'outdoor' | 'event' | 'desk'
+  capacity: number
+}
+
 interface ExtendedClient extends Client {
   full_name?: string | null
   email?: string | null
@@ -43,6 +50,13 @@ interface ExtendedBooking extends Booking {
   service?: Service
   client?: ExtendedClient
   staff?: { full_name: string | null }
+  resource?: StudioResource | null
+  resource_id?: string | null
+  booking_environment?: 'indoor' | 'outdoor' | 'event'
+  privacy_level?: 'shared' | 'private'
+  locks_indoor_studio?: boolean | null
+  availability_override?: boolean | null
+  override_reason?: string | null
 }
 
 interface BookingsClientProps {
@@ -50,6 +64,7 @@ interface BookingsClientProps {
   services: Service[]
   clients: ExtendedClient[]
   staff: StaffOption[]
+  resources: StudioResource[]
 }
 
 const statusColors: Record<string, string> = {
@@ -82,7 +97,7 @@ function addMinutes(time: string, minutes: number) {
   return date.toTimeString().slice(0, 5)
 }
 
-export function BookingsClient({ initialBookings, services, clients, staff }: BookingsClientProps) {
+export function BookingsClient({ initialBookings, services, clients, staff, resources }: BookingsClientProps) {
   const router = useRouter()
   const [bookings, setBookings] = useState(initialBookings)
   const [searchQuery, setSearchQuery] = useState('')
@@ -98,6 +113,11 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
     phone: '',
     service_id: '',
     staff_id: '',
+    resource_id: '',
+    booking_environment: 'indoor',
+    privacy_level: 'shared',
+    availability_override: false,
+    override_reason: '',
     booking_date: '',
     start_time: '',
     location: 'Studio',
@@ -130,6 +150,11 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
       phone: '',
       service_id: '',
       staff_id: '',
+      resource_id: '',
+      booking_environment: 'indoor',
+      privacy_level: 'shared',
+      availability_override: false,
+      override_reason: '',
       booking_date: '',
       start_time: '',
       location: 'Studio',
@@ -142,8 +167,8 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
   }
 
   const handleCreateBooking = async () => {
-    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time) {
-      toast.error('Please select service, date and time')
+    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time || !newBooking.resource_id) {
+      toast.error('Please select service, date, time and resource')
       return
     }
     if (clientMode === 'existing' && !newBooking.existing_client_id) {
@@ -171,6 +196,11 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
           start_time: newBooking.start_time,
           end_time: endTime,
           staff_id: newBooking.staff_id || null,
+          resource_id: newBooking.resource_id || null,
+          booking_environment: newBooking.booking_environment,
+          privacy_level: newBooking.privacy_level,
+          availability_override: newBooking.availability_override,
+          override_reason: newBooking.override_reason || null,
           full_name: clientMode === 'existing' ? getClientName(existingClient) : newBooking.full_name,
           email: clientMode === 'existing' ? getClientEmail(existingClient) : newBooking.email,
           phone: clientMode === 'existing' ? (existingClient?.phone || existingClient?.profile?.phone || '') : newBooking.phone,
@@ -191,6 +221,7 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
         service: selectedService,
         client: result.client,
         staff: staff.find((member) => member.id === newBooking.staff_id) || null,
+        resource: resources.find((resource) => resource.id === newBooking.resource_id) || null,
       }
 
       setBookings([enrichedBooking, ...bookings])
@@ -321,6 +352,84 @@ export function BookingsClient({ initialBookings, services, clients, staff }: Bo
                     <SelectContent>{staff.map((member) => <SelectItem key={member.id} value={member.id}>{member.full_name || member.email}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="rounded-lg border p-4 space-y-4">
+                <div className="font-medium">Studio Availability Rules</div>
+                <div className="grid md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>Environment</Label>
+                    <Select
+                      value={newBooking.booking_environment}
+                      onValueChange={(value) =>
+                        setNewBooking({
+                          ...newBooking,
+                          booking_environment: value,
+                          privacy_level: value === 'indoor' ? newBooking.privacy_level : 'shared',
+                          resource_id: '',
+                        })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="indoor">Indoor Studio</SelectItem>
+                        <SelectItem value="outdoor">Outdoor Shoot</SelectItem>
+                        <SelectItem value="event">Event Coverage</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Privacy</Label>
+                    <Select
+                      value={newBooking.privacy_level}
+                      onValueChange={(value) => setNewBooking({ ...newBooking, privacy_level: value, resource_id: '' })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="shared">Shared Resource</SelectItem>
+                        <SelectItem value="private" disabled={newBooking.booking_environment !== 'indoor'}>Private Indoor Studio Lock</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Resource *</Label>
+                    <Select value={newBooking.resource_id} onValueChange={(value) => setNewBooking({ ...newBooking, resource_id: value })}>
+                      <SelectTrigger><SelectValue placeholder="Select resource" /></SelectTrigger>
+                      <SelectContent>
+                        {resources
+                          .filter((resource) => {
+                            if (newBooking.booking_environment === 'indoor') return resource.type === 'indoor' || resource.type === 'desk'
+                            return resource.type === newBooking.booking_environment
+                          })
+                          .map((resource) => (
+                            <SelectItem key={resource.id} value={resource.id}>{resource.name}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={newBooking.availability_override}
+                    onChange={(event) => setNewBooking({ ...newBooking, availability_override: event.target.checked })}
+                    className="mt-1"
+                  />
+                  <span>Allow admin override if the selected slot/resource is already booked.</span>
+                </label>
+                {newBooking.availability_override && (
+                  <div className="space-y-2">
+                    <Label>Override Reason</Label>
+                    <Input
+                      value={newBooking.override_reason}
+                      onChange={(event) => setNewBooking({ ...newBooking, override_reason: event.target.value })}
+                      placeholder="Example: manager approved special arrangement"
+                    />
+                  </div>
+                )}
+                {newBooking.booking_environment === 'indoor' && newBooking.privacy_level === 'private' && (
+                  <p className="text-sm text-amber-600">Private indoor booking locks all indoor rooms for this date/time. Outdoor shoots can still be booked.</p>
+                )}
               </div>
 
               <div className="grid md:grid-cols-3 gap-4">
