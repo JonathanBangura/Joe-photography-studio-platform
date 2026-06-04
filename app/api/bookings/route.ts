@@ -13,6 +13,19 @@ const WORKFLOW_STAGES = [
   { name: 'Job Closed', description: 'Job has been completed and closed.', color: '#10B981', sort_order: 9 },
 ]
 
+type BookingEnvironment = 'indoor' | 'outdoor' | 'event'
+type PrivacyLevel = 'shared' | 'private'
+
+type ExistingBooking = {
+  id: string
+  resource_id: string | null
+  staff_id: string | null
+  booking_environment: BookingEnvironment | null
+  privacy_level: PrivacyLevel | null
+  locks_indoor_studio: boolean | null
+  studio_resources?: { id: string; name: string; type: string } | null
+}
+
 function addMinutes(time: string, minutes: number) {
   const [hours, mins] = time.split(':').map(Number)
   const date = new Date(2000, 0, 1, hours || 0, mins || 0)
@@ -30,6 +43,18 @@ function bookingReference() {
   return `BK-${stamp}-${Math.floor(1000 + Math.random() * 9000)}`
 }
 
+function normalizeEnvironment(value: unknown): BookingEnvironment {
+  return value === 'outdoor' || value === 'event' ? value : 'indoor'
+}
+
+function normalizePrivacy(value: unknown): PrivacyLevel {
+  return value === 'private' ? 'private' : 'shared'
+}
+
+function isIndoorLike(booking: ExistingBooking) {
+  return booking.booking_environment === 'indoor' || booking.studio_resources?.type === 'indoor' || booking.studio_resources?.type === 'desk'
+}
+
 async function ensureWorkflowStage(supabase: ReturnType<typeof createAdminClient>, stageName: string) {
   const { data: existing } = await supabase
     .from('workflow_stages')
@@ -43,6 +68,84 @@ async function ensureWorkflowStage(supabase: ReturnType<typeof createAdminClient
   const { data, error } = await supabase.from('workflow_stages').insert(stage).select('*').single()
   if (error) throw error
   return data
+}
+
+async function assertAvailability(params: {
+  supabase: ReturnType<typeof createAdminClient>
+  bookingDate: string
+  startTime: string
+  endTime: string
+  resourceId: string | null
+  staffId: string | null
+  bookingEnvironment: BookingEnvironment
+  privacyLevel: PrivacyLevel
+  allowOverride: boolean
+}) {
+  const {
+    supabase,
+    bookingDate,
+    startTime,
+    endTime,
+    resourceId,
+    staffId,
+    bookingEnvironment,
+    privacyLevel,
+    allowOverride,
+  } = params
+
+  if (allowOverride) return
+
+  const { data: resource, error: resourceError } = resourceId
+    ? await supabase.from('studio_resources').select('*').eq('id', resourceId).eq('is_active', true).maybeSingle()
+    : { data: null, error: null }
+
+  if (resourceError) throw resourceError
+
+  if (!resourceId && bookingEnvironment !== 'outdoor') {
+    throw new Error('Please select a studio resource for indoor/private bookings.')
+  }
+
+  const { data: overlapping, error } = await supabase
+    .from('bookings')
+    .select('id, resource_id, staff_id, booking_environment, privacy_level, locks_indoor_studio, studio_resources(id, name, type)')
+    .eq('booking_date', bookingDate)
+    .not('status', 'eq', 'cancelled')
+    .lt('start_time', endTime)
+    .gt('end_time', startTime)
+
+  if (error) throw error
+
+  const existing = (overlapping || []) as ExistingBooking[]
+  const newIsIndoor = bookingEnvironment === 'indoor' || resource?.type === 'indoor' || resource?.type === 'desk'
+
+  if (newIsIndoor && privacyLevel === 'private') {
+    const indoorConflict = existing.find(isIndoorLike)
+    if (indoorConflict) {
+      throw new Error('Private indoor booking unavailable: another indoor booking already exists during this time.')
+    }
+  }
+
+  if (newIsIndoor && privacyLevel === 'shared') {
+    const privateIndoorLock = existing.find((booking) => booking.locks_indoor_studio && isIndoorLike(booking))
+    if (privateIndoorLock) {
+      throw new Error('Indoor studio unavailable: a private indoor session has locked the studio during this time.')
+    }
+  }
+
+  if (resourceId) {
+    const sameResourceCount = existing.filter((booking) => booking.resource_id === resourceId).length
+    const capacity = Number(resource?.capacity || 1)
+    if (sameResourceCount >= capacity) {
+      throw new Error(`${resource?.name || 'Selected resource'} is already fully booked for this time.`)
+    }
+  }
+
+  if (staffId) {
+    const staffConflict = existing.find((booking) => booking.staff_id === staffId)
+    if (staffConflict) {
+      throw new Error('Selected photographer/staff member is already assigned to another booking at this time.')
+    }
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -73,6 +176,25 @@ export async function POST(request: NextRequest) {
     if (serviceError || !service) {
       return NextResponse.json({ error: 'Selected service/package was not found.' }, { status: 404 })
     }
+
+    const bookingEnvironment = normalizeEnvironment(body.booking_environment)
+    const privacyLevel = normalizePrivacy(body.privacy_level)
+    const resourceId = body.resource_id ? String(body.resource_id) : null
+    const staffId = body.staff_id ? String(body.staff_id) : null
+    const allowOverride = Boolean(body.availability_override)
+    const endTime = body.end_time || addMinutes(startTime, Number(service.duration_minutes || 60))
+
+    await assertAvailability({
+      supabase,
+      bookingDate,
+      startTime,
+      endTime,
+      resourceId,
+      staffId,
+      bookingEnvironment,
+      privacyLevel,
+      allowOverride,
+    })
 
     let client = null
     if (email) {
@@ -123,7 +245,6 @@ export async function POST(request: NextRequest) {
     const depositPaidAmount = Number(body.deposit_paid_amount || 0)
     const depositStatus = depositPaidAmount >= depositRequiredAmount ? 'paid' : depositPaidAmount > 0 ? 'partial' : 'required'
     const bookingSource = body.booking_source === 'walk_in' ? 'walk_in' : 'online'
-    const endTime = body.end_time || addMinutes(startTime, Number(service.duration_minutes || 60))
     const reference = bookingReference()
 
     const { data: booking, error: bookingError } = await supabase
@@ -131,20 +252,27 @@ export async function POST(request: NextRequest) {
       .insert({
         client_id: client.id,
         service_id: serviceId,
-        staff_id: body.staff_id || null,
+        staff_id: staffId,
+        resource_id: resourceId,
         booking_date: bookingDate,
         start_time: startTime,
         end_time: endTime,
-        location: body.location || 'Studio',
+        location: body.location || (bookingEnvironment === 'outdoor' ? 'Outdoor' : 'Studio'),
         status: depositPaidAmount > 0 || bookingSource === 'walk_in' ? 'confirmed' : 'pending',
         total_amount: totalAmount,
         booking_source: bookingSource,
         booking_reference: reference,
+        booking_environment: bookingEnvironment,
+        privacy_level: privacyLevel,
+        locks_indoor_studio: bookingEnvironment === 'indoor' && privacyLevel === 'private',
+        availability_override: allowOverride,
+        override_reason: allowOverride ? body.override_reason || 'Admin override' : null,
         deposit_percentage: depositPercentage,
         deposit_required_amount: depositRequiredAmount,
         deposit_paid_amount: depositPaidAmount,
         deposit_payment_method: body.deposit_payment_method || null,
         deposit_status: depositStatus,
+        created_by: body.created_by || null,
         notes: body.notes || null,
       })
       .select('*')

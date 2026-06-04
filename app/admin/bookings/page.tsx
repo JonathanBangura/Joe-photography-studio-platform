@@ -6,7 +6,7 @@ export default async function BookingsPage() {
 
   const { data: bookings } = await supabase
     .from('bookings')
-    .select('*, service:services(*), client:clients(*, profile:profiles(*)), staff:profiles(*)')
+    .select('*, service:services(*), client:clients(*, profile:profiles(*)), staff:profiles(*), resource:studio_resources(*)')
     .order('booking_date', { ascending: false })
 
   const { data: services } = await supabase
@@ -25,12 +25,20 @@ export default async function BookingsPage() {
     .in('studio_role', ['photographer', 'studio_manager', 'studio_admin', 'super_admin'])
     .eq('is_active', true)
 
+  const { data: resources } = await supabase
+    .from('studio_resources')
+    .select('*')
+    .eq('is_active', true)
+    .order('type')
+    .order('name')
+
   return (
     <BookingsClient 
       initialBookings={bookings || []} 
       services={services || []}
       clients={clients || []}
       staff={staff || []}
+      resources={resources || []}
     />
   )
 }
