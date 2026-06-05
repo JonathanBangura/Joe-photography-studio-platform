@@ -34,7 +34,7 @@ function isExpired(expiresAt?: string | null) {
 
 export default async function ClientGalleryPage({ params }: PageProps) {
   const { accessCode } = await params
-  const normalizedCode = decodeURIComponent(accessCode || '').trim().toUpperCase()
+  const normalizedCode = decodeURIComponent(accessCode || '').trim()
 
   if (!normalizedCode) {
     notFound()
@@ -63,9 +63,19 @@ export default async function ClientGalleryPage({ params }: PageProps) {
 
   const galleryExpired = isExpired(gallery.expires_at)
   const photos = gallery.photos || []
-  const clientName = gallery.client?.full_name || gallery.client?.profile?.full_name || gallery.client?.email || 'Client'
+
+  const clientName =
+    gallery.client?.full_name ||
+    gallery.client?.profile?.full_name ||
+    gallery.client?.email ||
+    'Client'
+
   const serviceName = gallery.booking?.service?.name || 'Photography Session'
-  const bookingReference = gallery.booking?.booking_reference || gallery.booking_id?.slice(0, 8) || 'N/A'
+
+  const bookingReference =
+    gallery.booking?.booking_reference ||
+    gallery.booking_id?.slice(0, 8) ||
+    'N/A'
 
   if (!gallery.is_active || galleryExpired) {
     return (
@@ -81,7 +91,7 @@ export default async function ClientGalleryPage({ params }: PageProps) {
                   </div>
                   <h1 className="mb-3 text-3xl font-bold">Gallery unavailable</h1>
                   <p className="mb-6 text-muted-foreground">
-                    This private gallery is either unpublished, expired, or no longer available. Please contact the studio for assistance.
+                    This private gallery is either unpublished, expired, or no longer available.
                   </p>
                   <Button asChild>
                     <Link href="/contact">Contact Studio</Link>
@@ -106,14 +116,21 @@ export default async function ClientGalleryPage({ params }: PageProps) {
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <Badge className="mb-4">Private Client Gallery</Badge>
-                <h1 className="text-4xl font-serif font-bold md:text-5xl">{gallery.title}</h1>
+                <h1 className="text-4xl font-serif font-bold md:text-5xl">
+                  {gallery.title}
+                </h1>
                 <p className="mt-3 max-w-2xl text-muted-foreground">
                   Welcome {clientName}. View your private gallery and enjoy the memories captured by the studio.
                 </p>
               </div>
+
               <div className="rounded-xl border bg-background p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Access Code</p>
-                <p className="font-mono text-2xl font-bold">{gallery.access_code}</p>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Access Code
+                </p>
+                <p className="font-mono text-2xl font-bold">
+                  {gallery.access_code}
+                </p>
               </div>
             </div>
 
@@ -127,6 +144,7 @@ export default async function ClientGalleryPage({ params }: PageProps) {
                   </div>
                 </CardContent>
               </Card>
+
               <Card>
                 <CardContent className="flex items-center gap-3 p-4">
                   <Camera className="h-5 w-5 text-primary" />
@@ -136,22 +154,30 @@ export default async function ClientGalleryPage({ params }: PageProps) {
                   </div>
                 </CardContent>
               </Card>
+
               <Card>
                 <CardContent className="flex items-center gap-3 p-4">
                   <Calendar className="h-5 w-5 text-primary" />
                   <div>
                     <p className="text-xs text-muted-foreground">Shoot Date</p>
-                    <p className="font-medium">{formatDate(gallery.booking?.booking_date)}</p>
+                    <p className="font-medium">
+                      {formatDate(gallery.booking?.booking_date)}
+                    </p>
                   </div>
                 </CardContent>
               </Card>
+
               <Card>
                 <CardContent className="flex items-center gap-3 p-4">
                   <Clock className="h-5 w-5 text-primary" />
                   <div>
                     <p className="text-xs text-muted-foreground">Booking Ref</p>
                     <p className="font-medium">{bookingReference}</p>
-                    {gallery.booking?.start_time && <p className="text-xs text-muted-foreground">{formatTime(gallery.booking.start_time)}</p>}
+                    {gallery.booking?.start_time && (
+                      <p className="text-xs text-muted-foreground">
+                        {formatTime(gallery.booking.start_time)}
+                      </p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
