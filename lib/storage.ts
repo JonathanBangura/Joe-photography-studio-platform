@@ -1,7 +1,7 @@
 export const GALLERY_IMAGES_BUCKET = 'gallery-images'
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-export const MAX_GALLERY_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
+export const MAX_GALLERY_IMAGE_SIZE_BYTES = 35 * 1024 * 1024
 
 export function isAllowedGalleryImage(file: File) {
   return ALLOWED_IMAGE_TYPES.includes(file.type)

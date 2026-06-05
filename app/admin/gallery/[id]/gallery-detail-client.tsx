@@ -360,7 +360,7 @@ export function GalleryDetailClient({ initialGallery }: GalleryDetailClientProps
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" />Upload Photos</CardTitle>
-              <CardDescription>Upload JPG, PNG, WEBP, or GIF images. Maximum file size is 10 MB per photo.</CardDescription>
+              <CardDescription>Upload JPG, PNG, WEBP, or GIF images. Maximum file size is 35 MB per photo.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-dashed p-6 text-center">
