@@ -50,10 +50,14 @@ export default async function ClientGalleryPage({ params }: PageProps) {
       booking:bookings(*, service:services(*), staff:profiles(*)),
       photos:client_gallery_photos(*)
     `)
-    .eq('access_code', normalizedCode)
-    .single()
+    .ilike('access_code', normalizedCode)
+    .maybeSingle()
 
-  if (error || !gallery) {
+  if (error) {
+    console.error('Gallery lookup error:', error)
+  }
+
+  if (!gallery) {
     notFound()
   }
 
