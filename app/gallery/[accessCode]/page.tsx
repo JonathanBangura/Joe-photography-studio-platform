@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Navbar } from '@/components/public/navbar'
 import { Footer } from '@/components/public/footer'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { ClientGalleryAccess } from './client-gallery-access'
 
 type PageProps = {
@@ -40,7 +40,7 @@ export default async function ClientGalleryPage({ params }: PageProps) {
     notFound()
   }
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { data: gallery, error } = await supabase
     .from('client_galleries')
