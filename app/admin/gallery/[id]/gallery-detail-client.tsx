@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   Check,
   Copy,
@@ -47,8 +49,6 @@ import {
   isAllowedGalleryImage,
   isGalleryImageTooLarge,
 } from "@/lib/storage";
-import { toast } from "sonner";
-
 type ClientRecord = {
   id: string;
   full_name: string | null;
@@ -134,6 +134,7 @@ function formatDate(value?: string | null) {
 export function GalleryDetailClient({
   initialGallery,
 }: GalleryDetailClientProps) {
+  const router = useRouter();
   const [gallery, setGallery] = useState<GalleryRecord>(initialGallery);
   const [photos, setPhotos] = useState<GalleryPhotoRecord[]>(
     initialGallery.photos || [],
@@ -152,6 +153,7 @@ export function GalleryDetailClient({
     null,
   );
   const [isDownloadingSelected, setIsDownloadingSelected] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedPhotos = useMemo(
@@ -290,36 +292,65 @@ export function GalleryDetailClient({
     }
   };
 
-  const togglePublish = async () => {
-    const supabase = createClient();
-    const nextStatus = !gallery.is_active;
+  const updateGalleryStatus = async (
+    status: "draft" | "published" | "editing" | "delivered" | "completed",
+  ) => {
+    try {
+      setIsUpdatingStatus(true);
 
-    const { data, error } = await supabase
-      .from("client_galleries")
-      .update({ is_active: nextStatus })
-      .eq("id", gallery.id)
-      .select(
-        "*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*), staff:profiles(*)), photos:client_gallery_photos(*)",
-      )
-      .single();
+      const response = await fetch(`/api/admin/gallery/${gallery.id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      });
 
-    if (error) {
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to update gallery status");
+      }
+
+      if (result.gallery) {
+        setGallery({
+          ...gallery,
+          ...result.gallery,
+          client: gallery.client,
+          booking: gallery.booking,
+          photos,
+        } as GalleryRecord);
+      } else {
+        setGallery({
+          ...gallery,
+          is_active: status !== "draft",
+        });
+      }
+
+      const labelMap: Record<string, string> = {
+        draft: "Draft",
+        published: "Published",
+        editing: "Editing In Progress",
+        delivered: "Final Delivery",
+        completed: "Completed",
+      };
+
+      toast.success(`Gallery status updated to ${labelMap[status]}`);
+      router.refresh();
+    } catch (error) {
       console.error(error);
-      toast.error("Failed to update gallery status");
-      return;
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update gallery status",
+      );
+    } finally {
+      setIsUpdatingStatus(false);
     }
+  };
 
-    await createAuditLog({
-      action: nextStatus ? "publish_gallery" : "unpublish_gallery",
-      resource_type: "client_gallery",
-      resource_id: gallery.id,
-      old_data: gallery,
-      new_data: data,
-    });
-
-    setGallery(data as GalleryRecord);
-    setPhotos((data?.photos || []) as GalleryPhotoRecord[]);
-    toast.success(nextStatus ? "Gallery published" : "Gallery moved to draft");
+  const togglePublish = async () => {
+    await updateGalleryStatus(gallery.is_active ? "draft" : "published");
   };
 
   const togglePhotoSelection = async (photo: GalleryPhotoRecord) => {
@@ -512,13 +543,37 @@ export function GalleryDetailClient({
           <Button
             onClick={togglePublish}
             variant={gallery.is_active ? "secondary" : "default"}
+            disabled={isUpdatingStatus}
           >
-            {gallery.is_active ? (
+            {isUpdatingStatus ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : gallery.is_active ? (
               <X className="mr-2 h-4 w-4" />
             ) : (
               <Check className="mr-2 h-4 w-4" />
             )}
             {gallery.is_active ? "Unpublish" : "Publish"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => updateGalleryStatus("editing")}
+            disabled={isUpdatingStatus || !gallery.booking_id}
+          >
+            Mark Editing
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => updateGalleryStatus("delivered")}
+            disabled={isUpdatingStatus || !gallery.booking_id}
+          >
+            Mark Delivered
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => updateGalleryStatus("completed")}
+            disabled={isUpdatingStatus || !gallery.booking_id}
+          >
+            Mark Completed
           </Button>
         </div>
       </div>
@@ -844,6 +899,59 @@ export function GalleryDetailClient({
                     </button>
                   </div>
                 </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Workflow Actions</CardTitle>
+              <CardDescription>
+                Move this gallery through the studio delivery workflow.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Button
+                className="w-full justify-start"
+                variant={gallery.is_active ? "secondary" : "default"}
+                onClick={() => updateGalleryStatus(gallery.is_active ? "draft" : "published")}
+                disabled={isUpdatingStatus}
+              >
+                {gallery.is_active ? (
+                  <X className="mr-2 h-4 w-4" />
+                ) : (
+                  <Check className="mr-2 h-4 w-4" />
+                )}
+                {gallery.is_active ? "Move to Draft" : "Publish for Selection"}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                variant="outline"
+                onClick={() => updateGalleryStatus("editing")}
+                disabled={isUpdatingStatus || !gallery.booking_id}
+              >
+                Mark Editing In Progress
+              </Button>
+              <Button
+                className="w-full justify-start"
+                variant="outline"
+                onClick={() => updateGalleryStatus("delivered")}
+                disabled={isUpdatingStatus || !gallery.booking_id}
+              >
+                Mark Final Delivery
+              </Button>
+              <Button
+                className="w-full justify-start"
+                variant="outline"
+                onClick={() => updateGalleryStatus("completed")}
+                disabled={isUpdatingStatus || !gallery.booking_id}
+              >
+                Mark Job Closed
+              </Button>
+              {!gallery.booking_id && (
+                <p className="text-xs text-muted-foreground">
+                  Workflow actions require this gallery to be linked to a booking.
+                </p>
               )}
             </CardContent>
           </Card>

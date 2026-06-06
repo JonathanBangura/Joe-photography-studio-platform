@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { moveBookingWorkflow } from '@/lib/workflow'
 
 type RouteContext = {
   params: Promise<{ accessCode: string }>
@@ -13,7 +14,6 @@ function isExpired(expiresAt?: string | null) {
 async function getGalleryByAccessCode(accessCode: string) {
   const supabase = createAdminClient()
   const normalizedCode = decodeURIComponent(accessCode || '').trim()
-
   const { data: gallery, error } = await supabase
     .from('client_galleries')
     .select('id, access_code, is_active, expires_at, client_id, booking_id, title')
@@ -101,6 +101,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Please select at least one photo before submitting.' }, { status: 400 })
     }
 
+    const selectedPhotoIds = selectedPhotos.map((photo) => photo.id)
+
+    // 1. Log the submission action
     await supabase.from('audit_logs').insert({
       action: 'client_submitted_gallery_selection',
       resource_type: 'client_gallery',
@@ -109,7 +112,29 @@ export async function POST(_request: NextRequest, context: RouteContext) {
         gallery_id: gallery.id,
         access_code: gallery.access_code,
         selected_count: selectedPhotos.length,
-        selected_photo_ids: selectedPhotos.map((photo) => photo.id),
+        selected_photo_ids: selectedPhotoIds,
+      },
+    })
+
+    // 2. Trigger the workflow transition if a booking exists
+    if (gallery.booking_id) {
+      await moveBookingWorkflow(
+        supabase,
+        gallery.booking_id,
+        'Editing In Progress',
+        null,
+        'Client submitted photo selection',
+      )
+    }
+
+    // 3. Log the second structural photo submission action
+    await supabase.from('audit_logs').insert({
+      action: 'client_photo_selection_submitted',
+      resource_type: 'client_gallery',
+      resource_id: gallery.id,
+      new_data: {
+        selected_photo_ids: selectedPhotoIds,
+        selected_count: selectedPhotoIds.length,
       },
     })
 
