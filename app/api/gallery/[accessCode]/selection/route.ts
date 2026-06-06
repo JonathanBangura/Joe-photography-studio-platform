@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { moveBookingWorkflow } from '@/lib/workflow'
 
 type RouteContext = {
   params: Promise<{ accessCode: string }>
@@ -126,3 +127,23 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     )
   }
 }
+
+if (gallery?.booking_id) {
+  await moveBookingWorkflow(
+    supabase,
+    gallery.booking_id,
+    'Editing In Progress',
+    null,
+    'Client submitted photo selection',
+  )
+}
+
+await supabase.from('audit_logs').insert({
+  action: 'client_photo_selection_submitted',
+  resource_type: 'client_gallery',
+  resource_id: gallery.id,
+  new_data: {
+    selected_photo_ids: selectedPhotoIds,
+    selected_count: selectedPhotoIds.length,
+  },
+})
