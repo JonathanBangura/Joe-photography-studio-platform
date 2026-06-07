@@ -14,6 +14,23 @@ type ExistingBooking = {
   studio_resources?: { id: string; name: string; type: string } | null
 }
 
+type StaffSchedule = {
+  id: string
+  staff_id: string
+  day_of_week: number
+  start_time: string
+  end_time: string
+  is_working: boolean
+}
+
+type TimeOffRequest = {
+  id: string
+  staff_id: string
+  start_date: string
+  end_date: string
+  status: string
+}
+
 function addMinutes(time: string, minutes: number) {
   const [hours, mins] = time.split(':').map(Number)
   const date = new Date(2000, 0, 1, hours || 0, mins || 0)
@@ -31,6 +48,24 @@ function normalizePrivacy(value: string | null): PrivacyLevel {
 
 function isIndoorLike(booking: ExistingBooking) {
   return booking.booking_environment === 'indoor' || booking.studio_resources?.type === 'indoor' || booking.studio_resources?.type === 'desk'
+}
+
+function getDayOfWeek(dateValue: string) {
+  // Use noon UTC to avoid timezone edge cases when converting date-only strings.
+  return new Date(`${dateValue}T12:00:00Z`).getUTCDay()
+}
+
+function timeToMinutes(time: string) {
+  const [hours, minutes] = time.split(':').map(Number)
+  return (hours || 0) * 60 + (minutes || 0)
+}
+
+function isWithinSchedule(schedule: StaffSchedule, startTime: string, endTime: string) {
+  const start = timeToMinutes(startTime)
+  const end = timeToMinutes(endTime)
+  const scheduleStart = timeToMinutes(schedule.start_time)
+  const scheduleEnd = timeToMinutes(schedule.end_time)
+  return schedule.is_working && start >= scheduleStart && end <= scheduleEnd
 }
 
 export async function GET(request: NextRequest) {
@@ -60,6 +95,7 @@ export async function GET(request: NextRequest) {
     }
 
     const endTime = addMinutes(startTime, Number(service.duration_minutes || 60))
+    const dayOfWeek = getDayOfWeek(bookingDate)
 
     const { data: resources, error: resourcesError } = await supabase
       .from('studio_resources')
@@ -83,6 +119,44 @@ export async function GET(request: NextRequest) {
     const existing = (overlapping || []) as ExistingBooking[]
     const existingPrivateIndoorLock = existing.find((booking) => booking.locks_indoor_studio && isIndoorLike(booking))
     const staffConflict = staffId ? existing.find((booking) => booking.staff_id === staffId) : null
+
+    let staffOnApprovedLeave: TimeOffRequest | null = null
+    let staffSchedule: StaffSchedule | null = null
+    let staffHasScheduleRestriction = false
+    let staffWithinWorkingHours = true
+
+    if (staffId) {
+      const { data: leaveData, error: leaveError } = await supabase
+        .from('time_off_requests')
+        .select('id, staff_id, start_date, end_date, status')
+        .eq('staff_id', staffId)
+        .eq('status', 'approved')
+        .lte('start_date', bookingDate)
+        .gte('end_date', bookingDate)
+        .maybeSingle()
+
+      if (leaveError) throw leaveError
+      staffOnApprovedLeave = (leaveData as TimeOffRequest | null) || null
+
+      const { data: scheduleData, error: scheduleError } = await supabase
+        .from('staff_schedules')
+        .select('*')
+        .eq('staff_id', staffId)
+        .eq('day_of_week', dayOfWeek)
+        .maybeSingle()
+
+      if (scheduleError) throw scheduleError
+      staffSchedule = (scheduleData as StaffSchedule | null) || null
+      staffHasScheduleRestriction = !!staffSchedule
+      staffWithinWorkingHours = staffSchedule ? isWithinSchedule(staffSchedule, startTime, endTime) : true
+    }
+
+    const staffAvailable = !staffConflict && !staffOnApprovedLeave && staffWithinWorkingHours
+    const staffConflictReasons = [
+      staffConflict ? 'Selected photographer/staff member already has another booking at this time.' : null,
+      staffOnApprovedLeave ? 'Selected photographer/staff member has approved time off on this date.' : null,
+      !staffWithinWorkingHours ? 'Selected photographer/staff member is outside scheduled working hours.' : null,
+    ].filter(Boolean)
 
     const availableResources = (resources || []).map((resource) => {
       const resourceType = String(resource.type)
@@ -137,10 +211,13 @@ export async function GET(request: NextRequest) {
       date: bookingDate,
       start_time: startTime,
       end_time: endTime,
+      day_of_week: dayOfWeek,
       booking_environment: bookingEnvironment,
       privacy_level: privacyLevel,
-      staff_available: !staffConflict,
-      staff_conflict_reason: staffConflict ? 'Selected photographer/staff member already has another booking at this time.' : null,
+      staff_available: staffAvailable,
+      staff_conflict_reason: staffConflictReasons.length ? staffConflictReasons.join(' ') : null,
+      staff_has_schedule_restriction: staffHasScheduleRestriction,
+      staff_schedule: staffSchedule,
       resources: availableResources,
     })
   } catch (error) {
