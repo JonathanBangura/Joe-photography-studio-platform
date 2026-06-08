@@ -207,10 +207,91 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     setIsLoading(true)
 
     try {
-      let existingClient = clients.find((client) => client.id === newBooking.existing_client_id)
-      const endTime = addMinutes(newBooking.start_time, Number(selectedService?.duration_minutes || 60))
+let existingClient = clients.find(
+  (client) => client.id === newBooking.existing_client_id
+)
 
-      const response = await fetch('/api/bookings', {
+const endTime = addMinutes(
+  newBooking.start_time,
+  Number(selectedService?.duration_minutes || 60)
+)
+
+// ======================================
+// VALIDATE BOOKING AVAILABILITY
+// ======================================
+
+const validationResponse = await fetch(
+  '/api/admin/bookings/validate',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      booking_date: newBooking.booking_date,
+      start_time: newBooking.start_time,
+      end_time: endTime,
+      resource_id: newBooking.resource_id || null,
+      staff_id: newBooking.staff_id || null,
+      booking_environment:
+        newBooking.booking_environment,
+      privacy_level:
+        newBooking.privacy_level,
+    }),
+  }
+)
+
+const validationResult =
+  await validationResponse.json()
+
+if (!validationResponse.ok) {
+  throw new Error(
+    validationResult.reason ||
+      'Booking validation failed'
+  )
+}
+
+// Conflict found
+if (
+  !validationResult.available &&
+  !newBooking.availability_override
+) {
+  toast.error(
+    validationResult.reason ||
+      'Selected slot is unavailable'
+  )
+
+  setIsLoading(false)
+  return
+}
+
+// Admin override
+if (
+  !validationResult.available &&
+  newBooking.availability_override
+) {
+  if (!newBooking.override_reason.trim()) {
+    toast.error(
+      'Please enter an override reason'
+    )
+
+    setIsLoading(false)
+    return
+  }
+
+  toast.warning(
+    `Override used: ${
+      validationResult.reason ||
+      'Conflict detected'
+    }`
+  )
+}
+
+// ======================================
+// CREATE BOOKING
+// ======================================
+
+const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
