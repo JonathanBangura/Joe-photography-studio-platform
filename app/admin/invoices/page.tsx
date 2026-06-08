@@ -741,7 +741,7 @@ export default function AdminInvoicesPage() {
       </Card>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Invoice Details</DialogTitle>
             <DialogDescription>
@@ -750,12 +750,12 @@ export default function AdminInvoicesPage() {
           </DialogHeader>
           {selectedInvoice && (
             <div className="space-y-6" id="invoice-print-area">
-              <div className="flex items-start justify-between border-b pb-4">
+              <div className="flex flex-col gap-4 border-b pb-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <h2 className="text-2xl font-bold">Joe Photography Studio</h2>
                   <p className="text-muted-foreground">Photography Invoice</p>
                 </div>
-                <div className="text-right">
+                <div className="text-left md:text-right break-words">
                   <p className="font-mono font-semibold">
                     {selectedInvoice.invoice_number}
                   </p>
@@ -766,7 +766,7 @@ export default function AdminInvoicesPage() {
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Client</CardTitle>
