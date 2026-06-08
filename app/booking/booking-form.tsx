@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { CheckCircle, ArrowRight, ArrowLeft, Camera, CreditCard, AlertCircle } from 'lucide-react'
+import { CheckCircle, ArrowRight, ArrowLeft, Camera, CreditCard, AlertCircle, Lock, Check, X } from 'lucide-react'
 
 interface Service {
   id: string
@@ -28,6 +28,11 @@ interface StudioResource {
   reason?: string
 }
 
+interface SlotAvailability {
+  available: boolean
+  reason?: string
+}
+
 interface BookingFormProps {
   services: Service[]
   availability: Array<{ day_of_week: number; start_time: string; end_time: string }>
@@ -43,17 +48,23 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
+  const [checkingSlots, setCheckingSlots] = useState(false)
   const [bookingReference, setBookingReference] = useState<string | null>(null)
+
   const [selectedService, setSelectedService] = useState<Service | null>(null)
   const [selectedDate, setSelectedDate] = useState('')
   const [selectedTime, setSelectedTime] = useState('')
+
   const [bookingEnvironment, setBookingEnvironment] = useState<'indoor' | 'outdoor' | 'event'>('indoor')
   const [privacyLevel, setPrivacyLevel] = useState<'shared' | 'private'>('shared')
+
   const [resourceId, setResourceId] = useState('')
   const [resources, setResources] = useState<StudioResource[]>([])
-  const [staffAvailable, setStaffAvailable] = useState(true)
+  const [slotAvailability, setSlotAvailability] = useState<Record<string, SlotAvailability>>({})
+
   const [depositPercentage, setDepositPercentage] = useState<'30' | '50'>('50')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
   const [formData, setFormData] = useState({
     name: clientInfo?.profile?.full_name || '',
     email: clientInfo?.profile?.email || '',
@@ -65,9 +76,15 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
   const totalAmount = Number(selectedService?.base_price || 0)
+
   const depositAmount = useMemo(
     () => Number(((totalAmount * Number(depositPercentage)) / 100).toFixed(2)),
-    [totalAmount, depositPercentage]
+    [totalAmount, depositPercentage],
+  )
+
+  const balanceAmount = useMemo(
+    () => Number((totalAmount - depositAmount).toFixed(2)),
+    [totalAmount, depositAmount],
   )
 
   const selectedResource = resources.find((resource) => resource.id === resourceId)
@@ -82,9 +99,72 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const maxDateStr = maxDate.toISOString().split('T')[0]
 
   useEffect(() => {
+    if (bookingEnvironment !== 'indoor') {
+      setPrivacyLevel('shared')
+    }
+  }, [bookingEnvironment])
+
+  useEffect(() => {
     setResourceId('')
     setResources([])
   }, [bookingEnvironment, privacyLevel, selectedService?.id, selectedDate, selectedTime])
+
+  useEffect(() => {
+    async function loadSlotAvailability() {
+      if (!selectedService?.id || !selectedDate) {
+        setSlotAvailability({})
+        return
+      }
+
+      setCheckingSlots(true)
+
+      const availabilityMap: Record<string, SlotAvailability> = {}
+
+      for (const slot of timeSlots) {
+        try {
+          const params = new URLSearchParams({
+            service_id: selectedService.id,
+            date: selectedDate,
+            start_time: slot,
+            booking_environment: bookingEnvironment,
+            privacy_level: privacyLevel,
+          })
+
+          const response = await fetch(`/api/availability?${params.toString()}`)
+          const result = await response.json()
+
+          if (!response.ok) {
+            availabilityMap[slot] = {
+              available: false,
+              reason: result.error || 'Unavailable',
+            }
+            continue
+          }
+
+          const hasAvailableResource = Array.isArray(result.resources)
+            ? result.resources.some((resource: StudioResource) => resource.available)
+            : false
+
+          availabilityMap[slot] = {
+            available: hasAvailableResource,
+            reason: hasAvailableResource
+              ? 'Available'
+              : result.reason || 'No studio resource available',
+          }
+        } catch {
+          availabilityMap[slot] = {
+            available: false,
+            reason: 'Unable to check slot',
+          }
+        }
+      }
+
+      setSlotAvailability(availabilityMap)
+      setCheckingSlots(false)
+    }
+
+    loadSlotAvailability()
+  }, [selectedDate, selectedService?.id, bookingEnvironment, privacyLevel])
 
   useEffect(() => {
     async function checkAvailability() {
@@ -108,7 +188,6 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
         if (!response.ok) throw new Error(result.error || 'Unable to check availability')
 
         setResources(result.resources || [])
-        setStaffAvailable(Boolean(result.staff_available))
       } catch (error) {
         setResources([])
         setErrorMessage(error instanceof Error ? error.message : 'Unable to check availability')
@@ -122,22 +201,32 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
 
   const validateStep = () => {
     setErrorMessage(null)
+
     if (step === 1 && !selectedService) {
       setErrorMessage('Please select a package first.')
       return false
     }
+
     if (step === 2 && (!selectedDate || !selectedTime || !bookingEnvironment || !privacyLevel || !resourceId)) {
       setErrorMessage('Please select date, time, booking type and an available resource.')
       return false
     }
+
+    if (step === 2 && slotAvailability[selectedTime] && !slotAvailability[selectedTime].available) {
+      setErrorMessage(slotAvailability[selectedTime].reason || 'Selected time is not available.')
+      return false
+    }
+
     if (step === 2 && selectedResource && !selectedResource.available) {
       setErrorMessage(selectedResource.reason || 'Selected resource is not available.')
       return false
     }
+
     if (step === 3 && (!formData.name || (!formData.email && !formData.phone))) {
       setErrorMessage('Please enter your name and at least one contact method: email or phone.')
       return false
     }
+
     return true
   }
 
@@ -213,12 +302,18 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
           <div className="space-y-8">
             <div className="text-center">
               <h1 className="text-3xl md:text-4xl font-bold mb-4">Choose Your Package</h1>
-              <p className="text-muted-foreground max-w-2xl mx-auto">Select a photography package. You can submit your booking without creating an account.</p>
+              <p className="text-muted-foreground max-w-2xl mx-auto">
+                Select a photography package. You can submit your booking without creating an account.
+              </p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-6">
               {services.map((service) => (
-                <Card key={service.id} className={`cursor-pointer transition-all hover:border-primary ${selectedService?.id === service.id ? 'border-primary ring-2 ring-primary/20' : ''}`} onClick={() => setSelectedService(service)}>
+                <Card
+                  key={service.id}
+                  className={`cursor-pointer transition-all hover:border-primary ${selectedService?.id === service.id ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  onClick={() => setSelectedService(service)}
+                >
                   <CardHeader>
                     <div className="flex items-start justify-between gap-4">
                       <div>
@@ -239,7 +334,9 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
             </div>
 
             <div className="flex justify-end">
-              <Button onClick={goNext} disabled={!selectedService}>Continue <ArrowRight className="w-4 h-4 ml-2" /></Button>
+              <Button onClick={goNext} disabled={!selectedService}>
+                Continue <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
             </div>
           </div>
         )}
@@ -248,14 +345,19 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
           <Card>
             <CardHeader>
               <CardTitle>Select Date, Time & Studio Resource</CardTitle>
-              <CardDescription>Private indoor sessions lock the entire indoor studio for that time. Outdoor shoots remain available separately.</CardDescription>
+              <CardDescription>
+                The studio assigns the photographer internally. Customers only choose session type, time and resource.
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Booking Environment</Label>
                   <Select value={bookingEnvironment} onValueChange={(value) => setBookingEnvironment(value as 'indoor' | 'outdoor' | 'event')}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="indoor">Indoor Studio</SelectItem>
                       <SelectItem value="outdoor">Outdoor Shoot</SelectItem>
@@ -263,36 +365,109 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Privacy Level</Label>
                   <Select value={privacyLevel} onValueChange={(value) => setPrivacyLevel(value as 'shared' | 'private')}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="shared">Shared Resource</SelectItem>
-                      <SelectItem value="private" disabled={bookingEnvironment !== 'indoor'}>Private Indoor Studio Lock</SelectItem>
+                      <SelectItem value="private" disabled={bookingEnvironment !== 'indoor'}>
+                        Private Indoor Studio Lock
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Preferred Date</Label>
-                  <Input type="date" min={minDate} max={maxDateStr} value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+              {bookingEnvironment === 'indoor' && privacyLevel === 'private' && (
+                <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+                  <Lock className="mt-0.5 h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="font-semibold text-amber-800">Private Indoor Studio Reservation</p>
+                    <p className="text-amber-700">
+                      This reserves the full indoor studio for your session. No other indoor booking will be accepted during this time.
+                    </p>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Preferred Time</Label>
-                  <Select value={selectedTime} onValueChange={setSelectedTime}>
-                    <SelectTrigger><SelectValue placeholder="Select time" /></SelectTrigger>
-                    <SelectContent>{timeSlots.map((time) => <SelectItem key={time} value={time}>{time}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>Preferred Date</Label>
+                <Input
+                  type="date"
+                  min={minDate}
+                  max={maxDateStr}
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value)
+                    setSelectedTime('')
+                    setResourceId('')
+                  }}
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Label>Available Time Slots</Label>
+
+                {!selectedDate && (
+                  <p className="text-sm text-muted-foreground">
+                    Select a date first to check available time slots.
+                  </p>
+                )}
+
+                {selectedDate && checkingSlots && (
+                  <p className="text-sm text-muted-foreground">
+                    Checking available slots...
+                  </p>
+                )}
+
+                {selectedDate && (
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                    {timeSlots.map((slot) => {
+                      const status = slotAvailability[slot]
+                      const isAvailable = Boolean(status?.available)
+                      const isSelected = selectedTime === slot
+
+                      return (
+                        <Button
+                          key={slot}
+                          type="button"
+                          variant={isSelected ? 'default' : isAvailable ? 'outline' : 'secondary'}
+                          disabled={!isAvailable || checkingSlots}
+                          onClick={() => {
+                            setSelectedTime(slot)
+                            setResourceId('')
+                          }}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <span>{slot}</span>
+                          {isAvailable ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {selectedTime && slotAvailability[selectedTime]?.reason && (
+                  <p className="text-xs text-muted-foreground">
+                    {slotAvailability[selectedTime].reason}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
                 <Label>Available Resource</Label>
-                <Select value={resourceId} onValueChange={setResourceId} disabled={!selectedDate || !selectedTime || checkingAvailability}>
-                  <SelectTrigger><SelectValue placeholder={checkingAvailability ? 'Checking availability...' : 'Select available resource'} /></SelectTrigger>
+                <Select
+                  value={resourceId}
+                  onValueChange={setResourceId}
+                  disabled={!selectedDate || !selectedTime || checkingAvailability}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={checkingAvailability ? 'Checking availability...' : 'Select available resource'} />
+                  </SelectTrigger>
                   <SelectContent>
                     {resources.map((resource) => (
                       <SelectItem key={resource.id} value={resource.id} disabled={!resource.available}>
@@ -301,6 +476,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
                     ))}
                   </SelectContent>
                 </Select>
+
                 {selectedDate && selectedTime && !checkingAvailability && availableResources.length === 0 && (
                   <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
                     <AlertCircle className="h-4 w-4 mt-0.5" />
@@ -310,8 +486,13 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
               </div>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(1)}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
-                <Button onClick={goNext} disabled={!resourceId || checkingAvailability}>Continue <ArrowRight className="w-4 h-4 ml-2" /></Button>
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                </Button>
+
+                <Button onClick={goNext} disabled={!resourceId || checkingAvailability}>
+                  Continue <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -321,19 +502,51 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
           <Card>
             <CardHeader>
               <CardTitle>Your Details</CardTitle>
-              <CardDescription>No account is required. We will use these details to contact you about the booking.</CardDescription>
+              <CardDescription>
+                No account is required. We will use these details to contact you about the booking.
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-4">
               <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Full Name *</Label><Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} /></div>
-                <div className="space-y-2"><Label>Phone</Label><Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} /></div>
+                <div className="space-y-2">
+                  <Label>Full Name *</Label>
+                  <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Phone</Label>
+                  <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+                </div>
               </div>
-              <div className="space-y-2"><Label>Email</Label><Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Location</Label><Input placeholder="Studio or event address" value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Special Requests</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} /></div>
+
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <Input
+                  placeholder="Studio or event address"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Special Requests</Label>
+                <Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
+              </div>
+
               <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
-                <Button onClick={goNext}>Review Booking <ArrowRight className="w-4 h-4 ml-2" /></Button>
+                <Button variant="outline" onClick={() => setStep(2)}>
+                  <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                </Button>
+
+                <Button onClick={goNext}>
+                  Review Booking <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -343,32 +556,83 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
           <Card>
             <CardHeader>
               <CardTitle>Review & Deposit Requirement</CardTitle>
-              <CardDescription>Your booking will be saved as pending until the studio confirms and deposit is paid.</CardDescription>
+              <CardDescription>
+                Your booking will be saved as pending until the studio confirms and deposit is paid.
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-6">
               <div className="rounded-lg border p-4 space-y-3">
-                <div className="flex justify-between"><span>Package</span><strong>{selectedService.name}</strong></div>
-                <div className="flex justify-between"><span>Date & Time</span><strong>{selectedDate} at {selectedTime}</strong></div>
-                <div className="flex justify-between"><span>Booking Type</span><strong className="capitalize">{privacyLevel} {bookingEnvironment}</strong></div>
-                <div className="flex justify-between"><span>Resource</span><strong>{selectedResource?.name}</strong></div>
-                <div className="flex justify-between"><span>Total Amount</span><strong>${totalAmount.toLocaleString()}</strong></div>
+                <div className="flex justify-between">
+                  <span>Package</span>
+                  <strong>{selectedService.name}</strong>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Date & Time</span>
+                  <strong>{selectedDate} at {selectedTime}</strong>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Booking Type</span>
+                  <strong className="capitalize">{privacyLevel} {bookingEnvironment}</strong>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Resource</span>
+                  <strong>{selectedResource?.name}</strong>
+                </div>
+
+                <div className="flex justify-between">
+                  <span>Photographer</span>
+                  <strong>Assigned by studio</strong>
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label>Deposit Requirement</Label>
+
                 <Select value={depositPercentage} onValueChange={(value) => setDepositPercentage(value as '30' | '50')}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="30">30% Deposit</SelectItem><SelectItem value="50">50% Deposit</SelectItem></SelectContent>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30% Deposit</SelectItem>
+                    <SelectItem value="50">50% Deposit</SelectItem>
+                  </SelectContent>
                 </Select>
+
+                <div className="rounded-lg border p-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span>Total Session Fee</span>
+                    <strong>${totalAmount.toLocaleString()}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Deposit Required</span>
+                    <strong>${depositAmount.toLocaleString()}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Balance Due</span>
+                    <strong>${balanceAmount.toLocaleString()}</strong>
+                  </div>
+                </div>
+
                 <div className="rounded-lg bg-primary/10 p-4 flex items-center gap-3">
                   <CreditCard className="w-5 h-5 text-primary" />
-                  <p className="text-sm">Deposit required: <strong>${depositAmount.toLocaleString()}</strong>. The studio will confirm availability and send payment instructions.</p>
+                  <p className="text-sm">
+                    The studio will confirm availability and send payment instructions for the required deposit.
+                  </p>
                 </div>
               </div>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(3)}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
-                <Button onClick={handleSubmit} disabled={loading}>{loading ? 'Submitting...' : 'Submit Booking Request'}</Button>
+                <Button variant="outline" onClick={() => setStep(3)}>
+                  <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                </Button>
+
+                <Button onClick={handleSubmit} disabled={loading}>
+                  {loading ? 'Submitting...' : 'Submit Booking Request'}
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -377,13 +641,26 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
         {step === 5 && (
           <Card className="text-center">
             <CardHeader>
-              <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center"><CheckCircle className="w-8 h-8 text-green-500" /></div>
+              <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center">
+                <CheckCircle className="w-8 h-8 text-green-500" />
+              </div>
               <CardTitle>Booking Request Submitted</CardTitle>
-              <CardDescription>Your booking has been sent to the studio and will appear on the admin dashboard.</CardDescription>
+              <CardDescription>
+                Your booking has been sent to the studio and will appear on the admin dashboard.
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="space-y-4">
-              {bookingReference && <div className="rounded-lg border p-4"><p className="text-sm text-muted-foreground">Booking Reference</p><p className="text-2xl font-bold text-primary">{bookingReference}</p></div>}
-              <p className="text-muted-foreground">We will contact you to confirm availability and complete the deposit payment.</p>
+              {bookingReference && (
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">Booking Reference</p>
+                  <p className="text-2xl font-bold text-primary">{bookingReference}</p>
+                </div>
+              )}
+
+              <p className="text-muted-foreground">
+                We will contact you to confirm availability and complete the deposit payment.
+              </p>
             </CardContent>
           </Card>
         )}
