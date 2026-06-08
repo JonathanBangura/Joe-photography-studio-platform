@@ -47,6 +47,7 @@ import {
   Send,
   CreditCard,
   Printer,
+  Percent,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { recordPaymentAndSyncInvoice } from "@/lib/business-logic-client";
@@ -61,6 +62,11 @@ type InvoiceRecord = {
   amount: number;
   tax_amount: number | null;
   total_amount: number;
+  subtotal_amount?: number | null;
+  discount_type?: "none" | "fixed" | "percentage" | null;
+  discount_value?: number | null;
+  discount_amount?: number | null;
+  discount_reason?: string | null;
   payment_status: "pending" | "partial" | "paid" | "overdue" | "cancelled";
   due_date: string | null;
   paid_date: string | null;
@@ -96,6 +102,16 @@ const statusStyles: Record<string, string> = {
   cancelled: "bg-red-500/20 text-red-500 border-red-500/30",
 };
 
+function calculateDiscount(subtotal: number, type: string, value: number) {
+  if (type === "fixed") return Math.min(value, subtotal);
+  if (type === "percentage") return Math.min((subtotal * value) / 100, subtotal);
+  return 0;
+}
+
+function money(value: number | null | undefined) {
+  return `$${Number(value || 0).toLocaleString()}`;
+}
+
 export default function AdminInvoicesPage() {
   const supabase = createClient();
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
@@ -107,16 +123,24 @@ export default function AdminInvoicesPage() {
   );
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [discountLoading, setDiscountLoading] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
     payment_method: "Cash",
     transaction_id: "",
     notes: "",
   });
+  const [discountForm, setDiscountForm] = useState({
+    type: "fixed",
+    value: "",
+    reason: "",
+  });
 
   useEffect(() => {
     fetchInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchInvoices() {
@@ -153,8 +177,8 @@ export default function AdminInvoicesPage() {
       const balance = Number(invoice.total_amount || 0) - paidAmount;
       const derivedStatus =
         invoice.payment_status !== "paid" &&
-          invoice.due_date &&
-          invoice.due_date < today
+        invoice.due_date &&
+        invoice.due_date < today
           ? "overdue"
           : invoice.payment_status;
 
@@ -180,6 +204,10 @@ export default function AdminInvoicesPage() {
     (sum, invoice) => sum + Math.max(invoice.balance, 0),
     0,
   );
+  const totalDiscounts = invoicesWithDerivedStatus.reduce(
+    (sum, invoice) => sum + Number(invoice.discount_amount || 0),
+    0,
+  );
 
   function getClientName(invoice: InvoiceRecord) {
     return (
@@ -200,6 +228,16 @@ export default function AdminInvoicesPage() {
     setViewOpen(true);
   }
 
+  function openDiscountDialog(invoice: InvoiceRecord) {
+    setSelectedInvoice(invoice);
+    setDiscountForm({
+      type: invoice.discount_type && invoice.discount_type !== "none" ? invoice.discount_type : "fixed",
+      value: invoice.discount_value ? String(invoice.discount_value) : "",
+      reason: invoice.discount_reason || "",
+    });
+    setDiscountOpen(true);
+  }
+
   function downloadInvoice(
     invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
   ) {
@@ -209,6 +247,8 @@ export default function AdminInvoicesPage() {
     const bookingDate = invoice.booking?.booking_date
       ? new Date(invoice.booking.booking_date).toLocaleDateString()
       : "-";
+    const subtotal = Number(invoice.subtotal_amount ?? invoice.amount ?? 0);
+    const discountAmount = Number(invoice.discount_amount || 0);
 
     const lines = [
       "JOE PHOTOGRAPHY STUDIO",
@@ -228,7 +268,13 @@ export default function AdminInvoicesPage() {
       `Booking Date: ${bookingDate}`,
       "",
       "PAYMENT SUMMARY",
-      `Subtotal: $${Number(invoice.amount || 0).toLocaleString()}`,
+      `Subtotal: $${subtotal.toLocaleString()}`,
+      ...(discountAmount > 0
+        ? [
+            `Discount: -$${discountAmount.toLocaleString()}`,
+            `Discount Reason: ${invoice.discount_reason || "N/A"}`,
+          ]
+        : []),
       `Tax: $${Number(invoice.tax_amount || 0).toLocaleString()}`,
       `Total: $${Number(invoice.total_amount || 0).toLocaleString()}`,
       `Paid: $${paid.toLocaleString()}`,
@@ -348,13 +394,132 @@ export default function AdminInvoicesPage() {
     );
   }
 
+  async function handleApplyDiscount() {
+    if (!selectedInvoice) return;
+
+    const discountValue = Number(discountForm.value);
+
+    if (!discountValue || discountValue <= 0) {
+      toast.error("Enter a valid discount value");
+      return;
+    }
+
+    setDiscountLoading(true);
+
+    try {
+      const subtotal =
+        Number(selectedInvoice.subtotal_amount) || Number(selectedInvoice.amount || 0);
+      const discountAmount = Number(
+        calculateDiscount(subtotal, discountForm.type, discountValue).toFixed(2),
+      );
+      const finalTotal = Number((subtotal - discountAmount).toFixed(2));
+      const paidAmount = (selectedInvoice.payments || []).reduce(
+        (sum, payment) => sum + Number(payment.amount || 0),
+        0,
+      );
+      const paymentStatus =
+        paidAmount >= finalTotal ? "paid" : paidAmount > 0 ? "partial" : "pending";
+
+      const { error } = await supabase
+        .from("invoices")
+        .update({
+          subtotal_amount: subtotal,
+          discount_type: discountForm.type,
+          discount_value: discountValue,
+          discount_amount: discountAmount,
+          discount_reason: discountForm.reason || null,
+          amount: subtotal,
+          total_amount: finalTotal,
+          payment_status: paymentStatus,
+          paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedInvoice.id);
+
+      if (error) throw error;
+
+      await createAuditLog({
+        action: "apply_discount",
+        resource_type: "invoice",
+        resource_id: selectedInvoice.id,
+        old_data: selectedInvoice,
+        new_data: {
+          discount_type: discountForm.type,
+          discount_value: discountValue,
+          discount_amount: discountAmount,
+          discount_reason: discountForm.reason || null,
+          total_amount: finalTotal,
+        },
+      });
+
+      toast.success("Discount applied");
+      setDiscountOpen(false);
+      await fetchInvoices();
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to apply discount");
+    } finally {
+      setDiscountLoading(false);
+    }
+  }
+
+  async function handleClearDiscount() {
+    if (!selectedInvoice) return;
+
+    setDiscountLoading(true);
+
+    try {
+      const subtotal =
+        Number(selectedInvoice.subtotal_amount) || Number(selectedInvoice.amount || 0);
+      const paidAmount = (selectedInvoice.payments || []).reduce(
+        (sum, payment) => sum + Number(payment.amount || 0),
+        0,
+      );
+      const paymentStatus =
+        paidAmount >= subtotal ? "paid" : paidAmount > 0 ? "partial" : "pending";
+
+      const { error } = await supabase
+        .from("invoices")
+        .update({
+          discount_type: "none",
+          discount_value: 0,
+          discount_amount: 0,
+          discount_reason: null,
+          amount: subtotal,
+          total_amount: subtotal,
+          payment_status: paymentStatus,
+          paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedInvoice.id);
+
+      if (error) throw error;
+
+      await createAuditLog({
+        action: "clear_discount",
+        resource_type: "invoice",
+        resource_id: selectedInvoice.id,
+        old_data: selectedInvoice,
+      });
+
+      toast.success("Discount cleared");
+      setDiscountOpen(false);
+      await fetchInvoices();
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to clear discount");
+    } finally {
+      setDiscountLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Invoices</h1>
           <p className="text-muted-foreground">
-            Manage real invoice balances and payment records
+            Manage real invoice balances, discounts, and payment records
           </p>
         </div>
         <Button variant="outline" onClick={fetchInvoices} disabled={loading}>
@@ -393,18 +558,14 @@ export default function AdminInvoicesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Paid</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Discounts</CardTitle>
+            <Percent className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {
-                invoicesWithDerivedStatus.filter(
-                  (i) => i.payment_status === "paid",
-                ).length
-              }
+              ${totalDiscounts.toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground">fully paid invoices</p>
+            <p className="text-xs text-muted-foreground">applied discounts</p>
           </CardContent>
         </Card>
         <Card>
@@ -465,6 +626,7 @@ export default function AdminInvoicesPage() {
                 <TableHead>Service</TableHead>
                 <TableHead>Booking Date</TableHead>
                 <TableHead>Total</TableHead>
+                <TableHead>Discount</TableHead>
                 <TableHead>Paid</TableHead>
                 <TableHead>Balance</TableHead>
                 <TableHead>Status</TableHead>
@@ -484,12 +646,21 @@ export default function AdminInvoicesPage() {
                   <TableCell>
                     {invoice.booking?.booking_date
                       ? new Date(
-                        invoice.booking.booking_date,
-                      ).toLocaleDateString()
+                          invoice.booking.booking_date,
+                        ).toLocaleDateString()
                       : "-"}
                   </TableCell>
                   <TableCell className="font-semibold">
-                    ${Number(invoice.total_amount || 0).toLocaleString()}
+                    {money(invoice.total_amount)}
+                  </TableCell>
+                  <TableCell>
+                    {Number(invoice.discount_amount || 0) > 0 ? (
+                      <span className="text-green-600">
+                        -{money(invoice.discount_amount)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell>${invoice.paidAmount.toLocaleString()}</TableCell>
                   <TableCell>
@@ -513,6 +684,14 @@ export default function AdminInvoicesPage() {
                         onClick={() => openInvoiceDialog(invoice)}
                       >
                         <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Apply Discount"
+                        onClick={() => openDiscountDialog(invoice)}
+                      >
+                        <Percent className="h-4 w-4" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -549,7 +728,7 @@ export default function AdminInvoicesPage() {
               {filteredInvoices.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={9}
+                    colSpan={10}
                     className="py-10 text-center text-muted-foreground"
                   >
                     {loading ? "Loading invoices..." : "No invoices found"}
@@ -616,8 +795,8 @@ export default function AdminInvoicesPage() {
                     <p className="text-muted-foreground">
                       {selectedInvoice.booking?.booking_date
                         ? new Date(
-                          selectedInvoice.booking.booking_date,
-                        ).toLocaleDateString()
+                            selectedInvoice.booking.booking_date,
+                          ).toLocaleDateString()
                         : "-"}
                     </p>
                     <Badge
@@ -634,45 +813,59 @@ export default function AdminInvoicesPage() {
                 <div className="flex justify-between">
                   <span>Subtotal</span>
                   <span>
-                    ${Number(selectedInvoice.amount || 0).toLocaleString()}
+                    {money(selectedInvoice.subtotal_amount ?? selectedInvoice.amount)}
                   </span>
                 </div>
+                {Number(selectedInvoice.discount_amount || 0) > 0 && (
+                  <>
+                    <div className="flex justify-between text-green-600">
+                      <span>
+                        Discount
+                        {selectedInvoice.discount_type === "percentage" &&
+                          selectedInvoice.discount_value
+                          ? ` (${selectedInvoice.discount_value}%)`
+                          : ""}
+                      </span>
+                      <span>-{money(selectedInvoice.discount_amount)}</span>
+                    </div>
+                    {selectedInvoice.discount_reason && (
+                      <div className="rounded-md bg-green-500/10 p-2 text-xs text-green-700">
+                        Reason: {selectedInvoice.discount_reason}
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="flex justify-between">
                   <span>Tax</span>
-                  <span>
-                    ${Number(selectedInvoice.tax_amount || 0).toLocaleString()}
-                  </span>
+                  <span>{money(selectedInvoice.tax_amount)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-lg border-t pt-3">
                   <span>Total</span>
-                  <span>
-                    $
-                    {Number(selectedInvoice.total_amount || 0).toLocaleString()}
-                  </span>
+                  <span>{money(selectedInvoice.total_amount)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Paid</span>
-                  <span>
-                    $
-                    {Number(
-                      (selectedInvoice as any).paidAmount || 0,
-                    ).toLocaleString()}
-                  </span>
+                  <span>{money((selectedInvoice as any).paidAmount || 0)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Balance</span>
                   <span>
-                    $
-                    {Math.max(
-                      Number((selectedInvoice as any).balance || 0),
-                      0,
-                    ).toLocaleString()}
+                    {money(Math.max(Number((selectedInvoice as any).balance || 0), 0))}
                   </span>
                 </div>
               </div>
             </div>
           )}
           <DialogFooter className="gap-2">
+            {selectedInvoice && (
+              <Button
+                variant="outline"
+                onClick={() => openDiscountDialog(selectedInvoice)}
+              >
+                <Percent className="h-4 w-4 mr-2" />
+                Discount
+              </Button>
+            )}
             {selectedInvoice && (
               <Button
                 variant="outline"
@@ -738,9 +931,9 @@ export default function AdminInvoicesPage() {
                   <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
                   <SelectItem value="Orange Money">Orange Money</SelectItem>
                   <SelectItem value="Afrimoney">Afrimoney</SelectItem>
-                  <SelectItem value="Online Transfer">
-                    Online Transfer
-                  </SelectItem>
+                  <SelectItem value="Vult App">Vult App</SelectItem>
+                  <SelectItem value="Vult Mastercard">Vult Mastercard</SelectItem>
+                  <SelectItem value="Online Transfer">Online Transfer</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -774,6 +967,100 @@ export default function AdminInvoicesPage() {
             </Button>
             <Button onClick={handleRecordPayment} disabled={paymentLoading}>
               {paymentLoading ? "Recording..." : "Record Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={discountOpen} onOpenChange={setDiscountOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply Discount</DialogTitle>
+            <DialogDescription>
+              Reduce the invoice total and keep the discount visible on the client invoice.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {selectedInvoice && (
+              <div className="rounded-lg border p-3 text-sm">
+                <div className="flex justify-between">
+                  <span>Current Subtotal</span>
+                  <strong>{money(selectedInvoice.subtotal_amount ?? selectedInvoice.amount)}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Current Discount</span>
+                  <strong>-{money(selectedInvoice.discount_amount || 0)}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Current Total</span>
+                  <strong>{money(selectedInvoice.total_amount)}</strong>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Discount Type</Label>
+              <Select
+                value={discountForm.type}
+                onValueChange={(value) =>
+                  setDiscountForm({ ...discountForm, type: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed">Fixed Amount</SelectItem>
+                  <SelectItem value="percentage">Percentage</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Discount Value {discountForm.type === "percentage" ? "(%)" : "($)"}
+              </Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={discountForm.value}
+                onChange={(e) =>
+                  setDiscountForm({ ...discountForm, value: e.target.value })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Reason</Label>
+              <Textarea
+                value={discountForm.reason}
+                onChange={(e) =>
+                  setDiscountForm({ ...discountForm, reason: e.target.value })
+                }
+                placeholder="Example: Loyal customer discount, two photos discounted, manager approved reduction..."
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDiscountOpen(false)}
+              disabled={discountLoading}
+            >
+              Cancel
+            </Button>
+            {selectedInvoice && Number(selectedInvoice.discount_amount || 0) > 0 && (
+              <Button
+                variant="destructive"
+                onClick={handleClearDiscount}
+                disabled={discountLoading}
+              >
+                Clear Discount
+              </Button>
+            )}
+            <Button onClick={handleApplyDiscount} disabled={discountLoading}>
+              {discountLoading ? "Applying..." : "Apply Discount"}
             </Button>
           </DialogFooter>
         </DialogContent>

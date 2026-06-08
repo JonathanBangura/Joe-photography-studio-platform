@@ -289,6 +289,13 @@ export async function POST(request: NextRequest) {
         booking_id: booking.id,
         client_id: client.id,
         invoice_number: invoiceNumber(),
+
+        subtotal_amount: totalAmount,
+        discount_type: 'none',
+        discount_value: 0,
+        discount_amount: 0,
+        discount_reason: null,
+
         amount: totalAmount,
         tax_amount: 0,
         total_amount: totalAmount,
