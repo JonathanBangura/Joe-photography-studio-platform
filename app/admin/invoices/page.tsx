@@ -336,8 +336,189 @@ export default function AdminInvoicesPage() {
     URL.revokeObjectURL(url);
   }
 
-  function printInvoice() {
-    window.print();
+  function buildInvoiceHtml(
+    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+  ) {
+    const paid = Number(invoice.paidAmount || 0);
+    const balance = Math.max(Number(invoice.balance || 0), 0);
+    const subtotal = Number(invoice.subtotal_amount ?? invoice.amount ?? 0);
+    const discount = Number(invoice.discount_amount || 0);
+    const tax = Number(invoice.tax_amount || 0);
+    const total = Number(invoice.total_amount || 0);
+    const service = invoice.booking?.service?.name || "Photography Service";
+    const bookingDate = invoice.booking?.booking_date
+      ? new Date(invoice.booking.booking_date).toLocaleDateString()
+      : "-";
+
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(invoice.invoice_number)}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              font-family: Arial, sans-serif;
+              color: #111827;
+              background: #ffffff;
+              margin: 0;
+              padding: 40px;
+            }
+            .invoice {
+              width: 100%;
+              max-width: 760px;
+              margin: 0 auto;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              gap: 24px;
+              border-bottom: 2px solid #e5e7eb;
+              padding-bottom: 20px;
+              margin-bottom: 24px;
+            }
+            h1, h2, h3, p { margin: 0; }
+            h1 { font-size: 28px; margin-bottom: 6px; }
+            h2 { font-size: 18px; text-align: right; }
+            .muted { color: #6b7280; }
+            .cards {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 16px;
+              margin-bottom: 20px;
+            }
+            .card, .summary {
+              border: 1px solid #e5e7eb;
+              border-radius: 12px;
+              padding: 18px;
+            }
+            .card h3 { font-size: 15px; margin-bottom: 14px; }
+            .card p { margin-top: 6px; }
+            .row {
+              display: flex;
+              justify-content: space-between;
+              gap: 24px;
+              padding: 8px 0;
+            }
+            .row span:last-child,
+            .row strong:last-child {
+              text-align: right;
+              white-space: nowrap;
+            }
+            .discount { color: #059669; }
+            .reason {
+              background: #dcfce7;
+              color: #047857;
+              border-radius: 8px;
+              padding: 10px;
+              margin: 6px 0 10px;
+              font-size: 13px;
+            }
+            .total {
+              border-top: 1px solid #e5e7eb;
+              margin-top: 8px;
+              padding-top: 14px;
+              font-size: 18px;
+              font-weight: 700;
+            }
+            .footer {
+              margin-top: 28px;
+              color: #6b7280;
+              font-size: 13px;
+              text-align: center;
+            }
+            @media print {
+              body { padding: 24px; }
+              .invoice { max-width: none; }
+            }
+            @media (max-width: 640px) {
+              body { padding: 20px; }
+              .header, .cards { display: block; }
+              .card { margin-bottom: 16px; }
+              h2 { text-align: left; margin-top: 14px; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="invoice">
+            <section class="header">
+              <div>
+                <h1>Joe Photography Studio</h1>
+                <p class="muted">Photography Invoice</p>
+              </div>
+              <div>
+                <h2>${escapeHtml(invoice.invoice_number)}</h2>
+                <p class="muted">Issued ${new Date(invoice.created_at).toLocaleDateString()}</p>
+                <p class="muted">Status: ${escapeHtml(invoice.payment_status)}</p>
+              </div>
+            </section>
+
+            <section class="cards">
+              <div class="card">
+                <h3>Client</h3>
+                <p><strong>${escapeHtml(getClientName(invoice))}</strong></p>
+                <p class="muted">${escapeHtml(getClientEmail(invoice) || "No email")}</p>
+                <p class="muted">${escapeHtml(invoice.client?.phone || "")}</p>
+              </div>
+              <div class="card">
+                <h3>Booking</h3>
+                <p><strong>${escapeHtml(service)}</strong></p>
+                <p class="muted">${escapeHtml(bookingDate)}</p>
+              </div>
+            </section>
+
+            <section class="summary">
+              <div class="row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
+              ${
+                discount > 0
+                  ? `<div class="row discount"><span>Discount</span><strong>-${money(discount)}</strong></div>`
+                  : ""
+              }
+              ${
+                invoice.discount_reason
+                  ? `<div class="reason">Reason: ${escapeHtml(invoice.discount_reason)}</div>`
+                  : ""
+              }
+              <div class="row"><span>Tax</span><strong>${money(tax)}</strong></div>
+              <div class="row total"><span>Total</span><strong>${money(total)}</strong></div>
+              <div class="row"><span>Paid</span><strong>${money(paid)}</strong></div>
+              <div class="row"><span>Balance</span><strong>${money(balance)}</strong></div>
+            </section>
+
+            <p class="footer">Thank you for choosing Joe Photography Studio.</p>
+          </main>
+        </body>
+      </html>
+    `;
+  }
+
+  function printInvoice(
+    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+  ) {
+    const printWindow = window.open("", "_blank", "width=900,height=700");
+
+    if (!printWindow) {
+      toast.error("Please allow pop-ups to print this invoice");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(buildInvoiceHtml(invoice));
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+      printWindow.focus();
+      printWindow.print();
+    };
   }
 
   function openPaymentDialog(invoice: InvoiceRecord & { balance?: number }) {
@@ -741,7 +922,7 @@ export default function AdminInvoicesPage() {
       </Card>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className="!w-[calc(100vw-2rem)] !max-w-[960px] max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Invoice Details</DialogTitle>
             <DialogDescription>
@@ -749,13 +930,13 @@ export default function AdminInvoicesPage() {
             </DialogDescription>
           </DialogHeader>
           {selectedInvoice && (
-            <div className="space-y-6" id="invoice-print-area">
+           <div className="space-y-6 w-full" id="invoice-print-area">
               <div className="flex flex-col gap-4 border-b pb-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <h2 className="text-2xl font-bold">Joe Photography Studio</h2>
                   <p className="text-muted-foreground">Photography Invoice</p>
                 </div>
-                <div className="text-left md:text-right break-words">
+                <div className="min-w-0 text-left break-words md:text-right">
                   <p className="font-mono font-semibold">
                     {selectedInvoice.invoice_number}
                   </p>
@@ -767,7 +948,7 @@ export default function AdminInvoicesPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                <Card>
+                <Card className="min-w-0">
                   <CardHeader>
                     <CardTitle className="text-base">Client</CardTitle>
                   </CardHeader>
@@ -783,7 +964,7 @@ export default function AdminInvoicesPage() {
                     </p>
                   </CardContent>
                 </Card>
-                <Card>
+                <Card className="min-w-0">
                   <CardHeader>
                     <CardTitle className="text-base">Booking</CardTitle>
                   </CardHeader>
@@ -809,24 +990,24 @@ export default function AdminInvoicesPage() {
                 </Card>
               </div>
 
-              <div className="rounded-lg border p-4 space-y-3">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span>
+              <div className="rounded-lg border p-4 space-y-3 w-full">
+                <div className="flex items-center justify-between gap-6">
+                  <span className="min-w-0">Subtotal</span>
+                  <span className="shrink-0 text-right">
                     {money(selectedInvoice.subtotal_amount ?? selectedInvoice.amount)}
                   </span>
                 </div>
                 {Number(selectedInvoice.discount_amount || 0) > 0 && (
                   <>
-                    <div className="flex justify-between text-green-600">
-                      <span>
+                    <div className="flex items-center justify-between gap-6 text-green-600">
+                      <span className="min-w-0">
                         Discount
                         {selectedInvoice.discount_type === "percentage" &&
                           selectedInvoice.discount_value
                           ? ` (${selectedInvoice.discount_value}%)`
                           : ""}
                       </span>
-                      <span>-{money(selectedInvoice.discount_amount)}</span>
+                      <span className="shrink-0 text-right">-{money(selectedInvoice.discount_amount)}</span>
                     </div>
                     {selectedInvoice.discount_reason && (
                       <div className="rounded-md bg-green-500/10 p-2 text-xs text-green-700">
@@ -835,28 +1016,28 @@ export default function AdminInvoicesPage() {
                     )}
                   </>
                 )}
-                <div className="flex justify-between">
-                  <span>Tax</span>
-                  <span>{money(selectedInvoice.tax_amount)}</span>
+                <div className="flex items-center justify-between gap-6">
+                  <span className="min-w-0">Tax</span>
+                  <span className="shrink-0 text-right">{money(selectedInvoice.tax_amount)}</span>
                 </div>
-                <div className="flex justify-between font-bold text-lg border-t pt-3">
-                  <span>Total</span>
-                  <span>{money(selectedInvoice.total_amount)}</span>
+                <div className="flex items-center justify-between gap-6 font-bold text-lg border-t pt-3">
+                  <span className="min-w-0">Total</span>
+                  <span className="shrink-0 text-right">{money(selectedInvoice.total_amount)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Paid</span>
-                  <span>{money((selectedInvoice as any).paidAmount || 0)}</span>
+                <div className="flex items-center justify-between gap-6">
+                  <span className="min-w-0">Paid</span>
+                  <span className="shrink-0 text-right">{money((selectedInvoice as any).paidAmount || 0)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Balance</span>
-                  <span>
+                <div className="flex items-center justify-between gap-6">
+                  <span className="min-w-0">Balance</span>
+                  <span className="shrink-0 text-right">
                     {money(Math.max(Number((selectedInvoice as any).balance || 0), 0))}
                   </span>
                 </div>
               </div>
             </div>
           )}
-          <DialogFooter className="gap-2">
+          <DialogFooter className="flex flex-wrap gap-2 sm:justify-end">
             {selectedInvoice && (
               <Button
                 variant="outline"
@@ -875,7 +1056,10 @@ export default function AdminInvoicesPage() {
                 Download
               </Button>
             )}
-            <Button variant="outline" onClick={printInvoice}>
+            <Button
+              variant="outline"
+              onClick={() => selectedInvoice && printInvoice(selectedInvoice as any)}
+            >
               <Printer className="h-4 w-4 mr-2" />
               Print
             </Button>
