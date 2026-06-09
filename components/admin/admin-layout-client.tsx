@@ -27,6 +27,7 @@ import {
   History,
   ChevronDown,
   RefreshCw,
+  Banknote,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -103,6 +104,8 @@ const navSections: NavSection[] = [
   {
     title: 'Finance',
     items: [
+      { href: '/admin/finance', icon: Banknote, label: 'Finance Dashboard', module: 'reports' },
+      { href: '/admin/finance/reports', icon: BarChart3, label: 'Finance Reports', module: 'reports' },
       { href: '/admin/invoices', icon: CreditCard, label: 'Invoices', module: 'invoices' },
       { href: '/admin/expenses', icon: DollarSign, label: 'Expenses', module: 'expenses' },
       { href: '/admin/reports', icon: BarChart3, label: 'Reports', module: 'reports' },
