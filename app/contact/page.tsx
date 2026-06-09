@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { MapPin, Phone, Mail, Clock, Send, CheckCircle } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
 
 const sessionTypes = [
   { value: "portrait", label: "Portrait Photography" },
@@ -41,21 +40,19 @@ export default function ContactPage() {
     e.preventDefault()
     setIsSubmitting(true)
 
-    const supabase = createClient()
-    
-    const { error } = await supabase.from("contact_submissions").insert({
-      name: formData.name,
-      email: formData.email,
-      phone: formData.phone || null,
-      subject: formData.subject || null,
-      message: formData.message,
-      session_type: formData.session_type || null,
-      preferred_date: formData.preferred_date || null,
-    })
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      })
 
-    setIsSubmitting(false)
-    
-    if (!error) {
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to send message")
+      }
+
       setIsSuccess(true)
       setFormData({
         name: "",
@@ -66,6 +63,11 @@ export default function ContactPage() {
         session_type: "",
         preferred_date: "",
       })
+    } catch (error) {
+      console.error("Contact form error:", error)
+      alert(error instanceof Error ? error.message : "Unable to send message")
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
