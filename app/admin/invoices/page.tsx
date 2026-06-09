@@ -50,7 +50,6 @@ import {
   Percent,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { recordPaymentAndSyncInvoice } from "@/lib/business-logic-client";
 import { createAuditLog } from "@/lib/audit-log-client";
 import { toast } from "sonner";
 
@@ -91,7 +90,19 @@ type InvoiceRecord = {
       name: string;
     } | null;
   } | null;
-  payments?: Array<{ amount: number }>;
+  payments?: Array<{
+    id?: string;
+    amount: number;
+    payment_method?: string | null;
+    payment_channel?: string | null;
+    payment_processor?: string | null;
+    transaction_id?: string | null;
+    customer_reference?: string | null;
+    payment_status?: string | null;
+    payment_date?: string | null;
+    notes?: string | null;
+    created_at?: string | null;
+  }>;
 };
 
 const statusStyles: Record<string, string> = {
@@ -129,7 +140,10 @@ export default function AdminInvoicesPage() {
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
     payment_method: "Cash",
+    payment_channel: "Cash",
+    payment_processor: "Manual",
     transaction_id: "",
+    customer_reference: "",
     notes: "",
   });
   const [discountForm, setDiscountForm] = useState({
@@ -152,7 +166,7 @@ export default function AdminInvoicesPage() {
         *,
         client:clients(*, profile:profiles(full_name, email)),
         booking:bookings(*, service:services(name)),
-        payments(amount)
+        payments(*)
       `,
       )
       .order("created_at", { ascending: false });
@@ -223,6 +237,20 @@ export default function AdminInvoicesPage() {
     return invoice.client?.email || invoice.client?.profile?.email || "";
   }
 
+  function getPaymentDisplayName(payment: NonNullable<InvoiceRecord["payments"]>[number]) {
+    return (
+      payment.payment_channel ||
+      payment.payment_method ||
+      payment.payment_processor ||
+      "Payment"
+    );
+  }
+
+  function getPaymentDate(payment: NonNullable<InvoiceRecord["payments"]>[number]) {
+    return payment.payment_date || payment.created_at || "";
+  }
+
+
   function openInvoiceDialog(invoice: InvoiceRecord) {
     setSelectedInvoice(invoice);
     setViewOpen(true);
@@ -279,6 +307,18 @@ export default function AdminInvoicesPage() {
       `Total: $${Number(invoice.total_amount || 0).toLocaleString()}`,
       `Paid: $${paid.toLocaleString()}`,
       `Balance: $${balance.toLocaleString()}`,
+      "",
+      "PAYMENT HISTORY",
+      ...((invoice.payments || []).length > 0
+        ? (invoice.payments || []).map((payment) => {
+            const paymentDate = getPaymentDate(payment)
+              ? new Date(getPaymentDate(payment)).toLocaleDateString()
+              : "N/A";
+            const channel = getPaymentDisplayName(payment);
+            const reference = payment.transaction_id || payment.customer_reference || "No reference";
+            return `${paymentDate} - ${channel} - ${reference} - $${Number(payment.amount || 0).toLocaleString()}`;
+          })
+        : ["No payments recorded"]),
       "",
       "Thank you for choosing Joe Photography Studio.",
     ];
@@ -358,6 +398,29 @@ export default function AdminInvoicesPage() {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
 
+    const paymentHistoryHtml =
+      (invoice.payments || []).length > 0
+        ? (invoice.payments || [])
+            .map((payment) => {
+              const paymentDate = getPaymentDate(payment)
+                ? new Date(getPaymentDate(payment)).toLocaleDateString()
+                : "N/A";
+              const channel = getPaymentDisplayName(payment);
+              const reference = payment.transaction_id || payment.customer_reference || "No reference";
+
+              return `
+                <div class="payment-row">
+                  <div>
+                    <strong>${escapeHtml(channel)}</strong>
+                    <p class="muted">${escapeHtml(paymentDate)} • ${escapeHtml(reference)}</p>
+                  </div>
+                  <strong>${money(Number(payment.amount || 0))}</strong>
+                </div>
+              `;
+            })
+            .join("")
+        : `<p class="muted">No payments recorded</p>`;
+
     return `
       <!doctype html>
       <html>
@@ -430,6 +493,16 @@ export default function AdminInvoicesPage() {
               font-size: 18px;
               font-weight: 700;
             }
+            .payment-row {
+              display: flex;
+              justify-content: space-between;
+              gap: 24px;
+              padding: 10px 0;
+              border-top: 1px solid #f3f4f6;
+            }
+            .payment-row:first-child {
+              border-top: 0;
+            }
             .footer {
               margin-top: 28px;
               color: #6b7280;
@@ -494,6 +567,11 @@ export default function AdminInvoicesPage() {
               <div class="row"><span>Balance</span><strong>${money(balance)}</strong></div>
             </section>
 
+            <section class="summary" style="margin-top: 18px;">
+              <h3 style="margin-bottom: 12px;">Payment History</h3>
+              ${paymentHistoryHtml}
+            </section>
+
             <p class="footer">Thank you for choosing Joe Photography Studio.</p>
           </main>
         </body>
@@ -528,7 +606,10 @@ export default function AdminInvoicesPage() {
         Math.max(Number(invoice.balance || invoice.total_amount || 0), 0),
       ),
       payment_method: "Cash",
+      payment_channel: "Cash",
+      payment_processor: "Manual",
       transaction_id: "",
+      customer_reference: invoice.invoice_number,
       notes: "",
     });
     setPaymentOpen(true);
@@ -544,20 +625,37 @@ export default function AdminInvoicesPage() {
     }
 
     setPaymentLoading(true);
+
     try {
-      await recordPaymentAndSyncInvoice({
-        invoiceId: selectedInvoice.id,
-        amount,
-        paymentMethod: paymentForm.payment_method,
-        transactionId: paymentForm.transaction_id || null,
-        notes: paymentForm.notes || null,
+      const response = await fetch("/api/invoices/record-payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          invoice_id: selectedInvoice.id,
+          amount,
+          payment_method: paymentForm.payment_method,
+          payment_channel: paymentForm.payment_channel,
+          payment_processor: paymentForm.payment_processor,
+          transaction_id: paymentForm.transaction_id || null,
+          customer_reference: paymentForm.customer_reference || null,
+          notes: paymentForm.notes || null,
+        }),
       });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to record payment");
+      }
+
       toast.success("Payment recorded and invoice updated");
       setPaymentOpen(false);
       await fetchInvoices();
     } catch (error) {
       console.error(error);
-      toast.error("Failed to record payment");
+      toast.error(error instanceof Error ? error.message : "Failed to record payment");
     } finally {
       setPaymentLoading(false);
     }
@@ -1035,6 +1133,57 @@ export default function AdminInvoicesPage() {
                   </span>
                 </div>
               </div>
+
+              <div className="rounded-lg border p-4 space-y-3 w-full">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Payment History</h3>
+                  <Badge variant="outline">
+                    {(selectedInvoice.payments || []).length} payment{(selectedInvoice.payments || []).length === 1 ? "" : "s"}
+                  </Badge>
+                </div>
+
+                {(selectedInvoice.payments || []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No payments recorded for this invoice yet.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {(selectedInvoice.payments || []).map((payment, index) => (
+                      <div
+                        key={payment.id || index}
+                        className="flex flex-col gap-2 rounded-md border p-3 text-sm md:flex-row md:items-center md:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium">
+                            {getPaymentDisplayName(payment)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {getPaymentDate(payment)
+                              ? new Date(getPaymentDate(payment)).toLocaleString()
+                              : "Date not available"}
+                          </p>
+                          {(payment.transaction_id || payment.customer_reference) && (
+                            <p className="text-xs text-muted-foreground">
+                              Ref: {payment.transaction_id || payment.customer_reference}
+                            </p>
+                          )}
+                          {payment.notes && (
+                            <p className="text-xs text-muted-foreground">
+                              Notes: {payment.notes}
+                            </p>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="font-semibold">{money(payment.amount)}</p>
+                          <p className="text-xs capitalize text-muted-foreground">
+                            {payment.payment_status || "completed"}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
           <DialogFooter className="flex flex-wrap gap-2 sm:justify-end">
@@ -1099,25 +1248,82 @@ export default function AdminInvoicesPage() {
                 }
               />
             </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select
+                  value={paymentForm.payment_method}
+                  onValueChange={(value) => {
+                    const isVult =
+                      value === "Mobile Money" ||
+                      value === "Card" ||
+                      value === "Vult App";
+
+                    setPaymentForm({
+                      ...paymentForm,
+                      payment_method: value,
+                      payment_processor: isVult ? "Vult" : "Manual",
+                      payment_channel:
+                        value === "Cash"
+                          ? "Cash"
+                          : value === "Bank Transfer"
+                            ? "Bank Transfer"
+                            : paymentForm.payment_channel,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Mobile Money">Mobile Money</SelectItem>
+                    <SelectItem value="Card">Card</SelectItem>
+                    <SelectItem value="Vult App">Vult App</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Payment Channel</Label>
+                <Select
+                  value={paymentForm.payment_channel}
+                  onValueChange={(value) =>
+                    setPaymentForm({ ...paymentForm, payment_channel: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Orange Money">Orange Money</SelectItem>
+                    <SelectItem value="Afrimoney">Afrimoney</SelectItem>
+                    <SelectItem value="Vult App">Vult App</SelectItem>
+                    <SelectItem value="Mastercard">Mastercard</SelectItem>
+                    <SelectItem value="Visa">Visa</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label>Payment Method</Label>
+              <Label>Payment Processor</Label>
               <Select
-                value={paymentForm.payment_method}
+                value={paymentForm.payment_processor}
                 onValueChange={(value) =>
-                  setPaymentForm({ ...paymentForm, payment_method: value })
+                  setPaymentForm({ ...paymentForm, payment_processor: value })
                 }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Cash">Cash</SelectItem>
-                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                  <SelectItem value="Orange Money">Orange Money</SelectItem>
-                  <SelectItem value="Afrimoney">Afrimoney</SelectItem>
-                  <SelectItem value="Vult App">Vult App</SelectItem>
-                  <SelectItem value="Vult Mastercard">Vult Mastercard</SelectItem>
-                  <SelectItem value="Online Transfer">Online Transfer</SelectItem>
+                  <SelectItem value="Manual">Manual</SelectItem>
+                  <SelectItem value="Vult">Vult</SelectItem>
+                  <SelectItem value="Bank">Bank</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1131,7 +1337,21 @@ export default function AdminInvoicesPage() {
                     transaction_id: e.target.value,
                   })
                 }
-                placeholder="Optional reference"
+                placeholder="Receipt, transfer, or Vult request reference"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Customer Reference</Label>
+              <Input
+                value={paymentForm.customer_reference}
+                onChange={(e) =>
+                  setPaymentForm({
+                    ...paymentForm,
+                    customer_reference: e.target.value,
+                  })
+                }
+                placeholder="Booking reference or invoice number"
               />
             </div>
             <div className="space-y-2">
