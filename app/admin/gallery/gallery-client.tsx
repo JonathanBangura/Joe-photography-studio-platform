@@ -168,25 +168,22 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
     const accessCode = generateGalleryAccessCode()
     const title = customTitle.trim() || getGalleryTitle(getClientName(selectedBooking.client), selectedBooking.booking_reference)
 
-    const { data, error } = await supabase
-      .from('client_galleries')
-      .insert({
-        client_id: selectedBooking.client_id,
-        booking_id: selectedBooking.id,
-        title,
-        access_code: accessCode,
-        expires_at: expiresAt || null,
-        is_active: false,
-      })
-      .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected)')
-      .single()
+  const response = await fetch("/api/admin/client-galleries", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      booking_id: selectedBooking.id,
+      client_id: selectedBooking.client_id,
+      title: galleryTitle,
+      expires_at: expiryDate || null,
+    }),
+  })
 
-    if (error) {
-      console.error(error)
-      toast.error(error.message || 'Failed to create gallery')
-      setIsCreating(false)
-      return
-    }
+  const result = await response.json()
+
+  if (!response.ok) {
+    throw new Error(result.error || "Failed to create gallery")
+  }
 
     await createAuditLog({
       action: 'create_gallery',
