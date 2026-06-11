@@ -158,26 +158,24 @@ export default function AdminInvoicesPage() {
   }, []);
 
   async function fetchInvoices() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("invoices")
-      .select(
-        `
-        *,
-        client:clients(*, profile:profiles(full_name, email)),
-        booking:bookings(*, service:services(name)),
-        payments(*)
-      `,
-      )
-      .order("created_at", { ascending: false });
+    setLoading(true)
 
-    if (error) {
-      toast.error("Failed to load invoices");
-      console.error(error);
-    } else {
-      setInvoices((data || []) as InvoiceRecord[]);
+    try {
+      const response = await fetch("/api/admin/invoices")
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error)
+      }
+
+      setInvoices(result.data || [])
+    } catch (error) {
+      console.error(error)
+      toast.error("Failed to load invoices")
+    } finally {
+      setLoading(false)
     }
-    setLoading(false);
   }
 
   const invoicesWithDerivedStatus = useMemo(() => {

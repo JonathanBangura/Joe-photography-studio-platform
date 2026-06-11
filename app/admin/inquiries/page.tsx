@@ -57,19 +57,22 @@ export default function AdminInquiriesPage() {
   async function fetchInquiries() {
     setLoading(true)
 
-    const { data, error } = await supabase
-      .from('contact_submissions')
-      .select('*')
-      .order('created_at', { ascending: false })
+    try {
+      const response = await fetch('/api/admin/inquiries')
 
-    if (error) {
-      console.error('Load inquiries error:', error)
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error)
+      }
+
+      setInquiries(result.data || [])
+    } catch (error) {
+      console.error(error)
       toast.error('Failed to load inquiries')
-    } else {
-      setInquiries((data || []) as Inquiry[])
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
   async function openInquiry(inquiry: Inquiry) {
