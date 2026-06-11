@@ -162,16 +162,13 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
       return
     }
 
-    const title = customTitle.trim() || getGalleryTitle(getClientName(selectedBooking.client), selectedBooking.booking_reference)
-
-    if (!title.trim()) {
-      toast.error('Gallery title is required')
-      return
-    }
-
     setIsCreating(true)
 
     try {
+      const title =
+        customTitle.trim() ||
+        getGalleryTitle(getClientName(selectedBooking.client), selectedBooking.booking_reference)
+
       const response = await fetch('/api/admin/client-galleries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,7 +194,6 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
       setCustomTitle('')
       setExpiresAt('')
       setIsCreateOpen(false)
-      await refreshGalleries()
       router.refresh()
     } catch (error) {
       console.error('Create gallery error:', error)
@@ -208,33 +204,35 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
   }
 
   const togglePublish = async (gallery: GalleryRecord) => {
-    const supabase = createClient()
     const nextStatus = !gallery.is_active
 
-    const { data, error } = await supabase
-      .from('client_galleries')
-      .update({ is_active: nextStatus })
-      .eq('id', gallery.id)
-      .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected)')
-      .single()
+    try {
+      const response = await fetch('/api/admin/client-galleries', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: gallery.id,
+          is_active: nextStatus,
+        }),
+      })
 
-    if (error) {
-      console.error(error)
-      toast.error('Failed to update gallery status')
-      return
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update gallery status')
+      }
+
+      setGalleries(
+        galleries.map((item) =>
+          item.id === gallery.id ? (result.gallery as GalleryRecord) : item,
+        ),
+      )
+      toast.success(nextStatus ? 'Gallery published' : 'Gallery moved to draft')
+      router.refresh()
+    } catch (error) {
+      console.error('Update gallery status error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to update gallery status')
     }
-
-    await createAuditLog({
-      action: nextStatus ? 'publish_gallery' : 'unpublish_gallery',
-      resource_type: 'client_gallery',
-      resource_id: gallery.id,
-      old_data: gallery,
-      new_data: data,
-    })
-
-    setGalleries(galleries.map((item) => (item.id === gallery.id ? (data as GalleryRecord) : item)))
-    toast.success(nextStatus ? 'Gallery published' : 'Gallery moved to draft')
-    router.refresh()
   }
 
   const totalPhotos = galleries.reduce((sum, gallery) => sum + getPhotoCount(gallery), 0)
