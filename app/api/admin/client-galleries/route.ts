@@ -32,7 +32,7 @@ export async function POST(request: Request) {
         expires_at: expiresAt,
         is_active: false,
       })
-      .select("*")
+      .select("*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected)")
       .single()
 
     if (error) throw error

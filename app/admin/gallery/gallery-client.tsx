@@ -162,44 +162,49 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
       return
     }
 
-    setIsCreating(true)
-    const supabase = createClient()
-
-    const accessCode = generateGalleryAccessCode()
     const title = customTitle.trim() || getGalleryTitle(getClientName(selectedBooking.client), selectedBooking.booking_reference)
 
-  const response = await fetch("/api/admin/client-galleries", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      booking_id: selectedBooking.id,
-      client_id: selectedBooking.client_id,
-      title: galleryTitle,
-      expires_at: expiryDate || null,
-    }),
-  })
+    if (!title.trim()) {
+      toast.error('Gallery title is required')
+      return
+    }
 
-  const result = await response.json()
+    setIsCreating(true)
 
-  if (!response.ok) {
-    throw new Error(result.error || "Failed to create gallery")
-  }
+    try {
+      const response = await fetch('/api/admin/client-galleries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          booking_id: selectedBooking.id,
+          client_id: selectedBooking.client_id,
+          title,
+          expires_at: expiresAt || null,
+        }),
+      })
 
-    await createAuditLog({
-      action: 'create_gallery',
-      resource_type: 'client_gallery',
-      resource_id: data.id,
-      new_data: data,
-    })
+      const result = await response.json()
 
-    toast.success('Gallery created')
-    setGalleries([data as GalleryRecord, ...galleries])
-    setSelectedBookingId('')
-    setCustomTitle('')
-    setExpiresAt('')
-    setIsCreateOpen(false)
-    setIsCreating(false)
-    router.refresh()
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to create gallery')
+      }
+
+      const createdGallery = result.gallery as GalleryRecord
+
+      toast.success('Gallery created')
+      setGalleries([createdGallery, ...galleries])
+      setSelectedBookingId('')
+      setCustomTitle('')
+      setExpiresAt('')
+      setIsCreateOpen(false)
+      await refreshGalleries()
+      router.refresh()
+    } catch (error) {
+      console.error('Create gallery error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to create gallery')
+    } finally {
+      setIsCreating(false)
+    }
   }
 
   const togglePublish = async (gallery: GalleryRecord) => {
