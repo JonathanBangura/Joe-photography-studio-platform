@@ -1,6 +1,74 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+async function sendEmail(options: {
+  to: string
+  subject: string
+  html: string
+}) {
+  const apiKey = process.env.RESEND_API_KEY
+  const from = process.env.RESEND_FROM_EMAIL
+
+  if (!apiKey || !from) {
+    return {
+      sent: false,
+      skipped: true,
+      reason:
+        'Email service is not configured. Add RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel.',
+    }
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+    }),
+  })
+
+  const result = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    return {
+      sent: false,
+      skipped: false,
+      reason: result?.message || 'Failed to send email notification.',
+      result,
+    }
+  }
+
+  return {
+    sent: true,
+    skipped: false,
+    result,
+  }
+}
+
+async function getSetting(supabase: ReturnType<typeof createAdminClient>, key: string) {
+  const { data } = await supabase
+    .from('business_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle()
+
+  return data?.value ? String(data.value) : ''
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -8,10 +76,22 @@ export async function POST(request: Request) {
     const name = String(body.name || '').trim()
     const email = String(body.email || '').trim().toLowerCase()
     const message = String(body.message || '').trim()
+    const phone = body.phone ? String(body.phone).trim() : null
+    const subject = body.subject ? String(body.subject).trim() : null
+    const sessionType = body.session_type ? String(body.session_type) : null
+    const preferredDate = body.preferred_date ? String(body.preferred_date) : null
 
     if (!name || !email || !message) {
       return NextResponse.json(
         { error: 'Name, email and message are required.' },
+        { status: 400 },
+      )
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return NextResponse.json(
+        { error: 'Please enter a valid email address.' },
         { status: 400 },
       )
     }
@@ -23,11 +103,11 @@ export async function POST(request: Request) {
       .insert({
         name,
         email,
-        phone: body.phone ? String(body.phone).trim() : null,
-        subject: body.subject ? String(body.subject).trim() : null,
+        phone,
+        subject,
         message,
-        session_type: body.session_type || null,
-        preferred_date: body.preferred_date || null,
+        session_type: sessionType,
+        preferred_date: preferredDate,
         is_read: false,
         is_responded: false,
       })
@@ -39,20 +119,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
+    const studioEmail =
+      process.env.STUDIO_NOTIFICATION_EMAIL ||
+      (await getSetting(supabase, 'email')) ||
+      process.env.RESEND_FROM_EMAIL ||
+      ''
+
+    let emailNotification: Awaited<ReturnType<typeof sendEmail>> | null = null
+
+    if (studioEmail) {
+      emailNotification = await sendEmail({
+        to: studioEmail,
+        subject: `New website inquiry${subject ? `: ${subject}` : ''}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+            <h2>New Website Inquiry</h2>
+            <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+            <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+            <p><strong>Phone:</strong> ${escapeHtml(phone || 'N/A')}</p>
+            <p><strong>Session Type:</strong> ${escapeHtml(sessionType || 'N/A')}</p>
+            <p><strong>Preferred Date:</strong> ${escapeHtml(preferredDate || 'N/A')}</p>
+            <p><strong>Subject:</strong> ${escapeHtml(subject || 'No subject')}</p>
+            <div style="margin-top:16px;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
+              ${escapeHtml(message).replace(/\n/g, '<br />')}
+            </div>
+          </div>
+        `,
+      })
+    }
+
     await supabase.from('audit_logs').insert({
       action: 'contact_submission_created',
       resource_type: 'contact_submission',
       resource_id: data.id,
-      new_data: data,
+      new_data: {
+        submission: data,
+        studio_email: studioEmail || null,
+        notification: emailNotification,
+      },
       ip_address: request.headers.get('x-forwarded-for'),
       user_agent: request.headers.get('user-agent'),
     })
 
-    return NextResponse.json({ submission: data })
+    return NextResponse.json({
+      submission: data,
+      notification: emailNotification,
+    })
   } catch (error) {
     console.error('Contact API error:', error)
     return NextResponse.json(
-      { error: 'Unable to submit inquiry.' },
+      { error: error instanceof Error ? error.message : 'Unable to submit inquiry.' },
       { status: 500 },
     )
   }

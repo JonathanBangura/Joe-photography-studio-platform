@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Navbar } from "@/components/public/navbar"
 import { Footer } from "@/components/public/footer"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { MapPin, Phone, Mail, Clock, Send, CheckCircle } from "lucide-react"
+import type { PublicBusinessSettings } from "@/lib/business-settings-public"
+import { defaultPublicBusinessSettings } from "@/lib/business-settings-public"
 
 const sessionTypes = [
   { value: "portrait", label: "Portrait Photography" },
@@ -23,9 +25,24 @@ const sessionTypes = [
   { value: "other", label: "Other" },
 ]
 
+function buildAddress(settings: PublicBusinessSettings) {
+  return [settings.address, settings.city, settings.state, settings.country]
+    .filter(Boolean)
+    .join(', ')
+}
+
+function formatWorkingHours(value: string) {
+  return (value || defaultPublicBusinessSettings.working_hours)
+    .split('\n')
+    .filter(Boolean)
+}
+
 export default function ContactPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
+  const [settings, setSettings] = useState<PublicBusinessSettings>(
+    defaultPublicBusinessSettings,
+  )
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -35,6 +52,33 @@ export default function ContactPage() {
     session_type: "",
     preferred_date: "",
   })
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const response = await fetch('/api/business-settings', {
+          cache: 'no-store',
+        })
+        const result = await response.json()
+
+        if (response.ok && result.settings) {
+          setSettings({ ...defaultPublicBusinessSettings, ...result.settings })
+        }
+      } catch (error) {
+        console.error('Contact settings load failed:', error)
+      }
+    }
+
+    loadSettings()
+  }, [])
+
+  const studioAddress = useMemo(() => buildAddress(settings), [settings])
+  const workingHours = useMemo(
+    () => formatWorkingHours(settings.working_hours),
+    [settings.working_hours],
+  )
+  const phoneHref = settings.phone ? `tel:${settings.phone.replace(/\s+/g, '')}` : '#'
+  const emailHref = settings.email ? `mailto:${settings.email}` : '#'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -76,7 +120,6 @@ export default function ContactPage() {
       <Navbar />
       
       <main className="pt-24">
-        {/* Hero Section */}
         <section className="py-20 px-4">
           <div className="container mx-auto max-w-6xl text-center">
             <span className="text-primary font-medium tracking-widest text-sm uppercase">Get in Touch</span>
@@ -90,11 +133,9 @@ export default function ContactPage() {
           </div>
         </section>
 
-        {/* Contact Content */}
         <section className="py-12 px-4 pb-24">
           <div className="container mx-auto max-w-6xl">
             <div className="grid lg:grid-cols-3 gap-8">
-              {/* Contact Info Cards */}
               <div className="space-y-6">
                 <Card className="bg-card/50 border-border/50">
                   <CardContent className="flex items-start gap-4 p-6">
@@ -103,10 +144,8 @@ export default function ContactPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold mb-1">Studio Location</h3>
-                      <p className="text-muted-foreground text-sm">
-                        123 Creative Avenue<br />
-                        Photography District<br />
-                        New York, NY 10001
+                      <p className="text-muted-foreground text-sm whitespace-pre-line">
+                        {studioAddress || 'Studio address not set'}
                       </p>
                     </div>
                   </CardContent>
@@ -119,10 +158,16 @@ export default function ContactPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold mb-1">Phone</h3>
-                      <p className="text-muted-foreground text-sm">
-                        +1 (555) 123-4567<br />
-                        +1 (555) 987-6543
-                      </p>
+                      {settings.phone ? (
+                        <a
+                          href={phoneHref}
+                          className="text-muted-foreground text-sm hover:text-primary transition-colors"
+                        >
+                          {settings.phone}
+                        </a>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">Phone not set</p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -134,10 +179,16 @@ export default function ContactPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold mb-1">Email</h3>
-                      <p className="text-muted-foreground text-sm">
-                        hello@joestudio.com<br />
-                        bookings@joestudio.com
-                      </p>
+                      {settings.email ? (
+                        <a
+                          href={emailHref}
+                          className="text-muted-foreground text-sm hover:text-primary transition-colors"
+                        >
+                          {settings.email}
+                        </a>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">Email not set</p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -150,16 +201,18 @@ export default function ContactPage() {
                     <div>
                       <h3 className="font-semibold mb-1">Working Hours</h3>
                       <p className="text-muted-foreground text-sm">
-                        Mon - Fri: 9:00 AM - 6:00 PM<br />
-                        Sat: 10:00 AM - 4:00 PM<br />
-                        Sun: By Appointment
+                        {workingHours.map((line, index) => (
+                          <span key={line}>
+                            {line}
+                            {index < workingHours.length - 1 && <br />}
+                          </span>
+                        ))}
                       </p>
                     </div>
                   </CardContent>
                 </Card>
               </div>
 
-              {/* Contact Form */}
               <div className="lg:col-span-2">
                 <Card className="bg-card/50 border-border/50">
                   <CardHeader>
@@ -218,7 +271,7 @@ export default function ContactPage() {
                               type="tel"
                               value={formData.phone}
                               onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                              placeholder="+1 (555) 123-4567"
+                              placeholder="+232 00 000000"
                               className="bg-background/50"
                             />
                           </div>

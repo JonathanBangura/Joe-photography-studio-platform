@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -99,7 +98,6 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<BusinessSettings>(defaultSettings)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const supabase = createClient()
 
   useEffect(() => {
     fetchSettings()
@@ -107,37 +105,60 @@ export default function SettingsPage() {
 
   async function fetchSettings() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('business_settings')
-      .select('key, value')
 
-    if (!error && data) {
-      const settingsObj = { ...defaultSettings }
-      data.forEach((item) => {
-        if (item.key in settingsObj) {
-          (settingsObj as any)[item.key] = item.value
-        }
+    try {
+      const response = await fetch('/api/business-settings', {
+        cache: 'no-store',
       })
-      setSettings(settingsObj)
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to load settings')
+      }
+
+      setSettings({
+        ...defaultSettings,
+        ...(result.settings || {}),
+      })
+    } catch (error) {
+      console.error('Settings load error:', error)
+      toast.error('Failed to load settings')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function saveSettings() {
     setSaving(true)
+
     try {
-      // Upsert each setting
-      const entries = Object.entries(settings)
-      for (const [key, value] of entries) {
-        await supabase
-          .from('business_settings')
-          .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      const response = await fetch('/api/business-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ settings }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to save settings')
       }
+
+      setSettings({
+        ...defaultSettings,
+        ...(result.settings || settings),
+      })
+
       toast.success('Settings saved successfully')
     } catch (error) {
-      toast.error('Failed to save settings')
+      console.error('Settings save error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to save settings')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const updateSetting = (key: keyof BusinessSettings, value: any) => {

@@ -181,6 +181,8 @@ export function getModuleFromPath(pathname: string): Module {
       return 'clients'
     case 'inquiries':
       return 'inquiries'
+    case 'testimonials':
+      return 'inquiries'
     case 'gallery':
       return 'gallery'
     case 'services':

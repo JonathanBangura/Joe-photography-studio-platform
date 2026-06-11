@@ -1,0 +1,345 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { Search, RefreshCw, Star, CheckCircle, XCircle, Trash2, Eye, MessageSquareQuote } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { toast } from 'sonner'
+
+type Testimonial = {
+  id: string
+  client_id: string | null
+  client_name: string
+  content: string
+  rating: number | null
+  session_type: string | null
+  is_approved: boolean
+  is_featured: boolean
+  created_at: string
+  client?: {
+    full_name?: string | null
+    email?: string | null
+    phone?: string | null
+    profile?: {
+      full_name?: string | null
+      email?: string | null
+    } | null
+  } | null
+}
+
+const statusStyles: Record<string, string> = {
+  approved: 'bg-green-500/10 text-green-600 border-green-500/20',
+  pending: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+  featured: 'bg-primary/10 text-primary border-primary/20',
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString()
+}
+
+function renderStars(rating?: number | null) {
+  const count = Math.min(Math.max(Number(rating || 5), 1), 5)
+  return Array.from({ length: 5 }).map((_, index) => (
+    <Star
+      key={index}
+      className={`h-4 w-4 ${index < count ? 'fill-primary text-primary' : 'text-muted-foreground/30'}`}
+    />
+  ))
+}
+
+export default function AdminTestimonialsPage() {
+  const [testimonials, setTestimonials] = useState<Testimonial[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [selectedTestimonial, setSelectedTestimonial] = useState<Testimonial | null>(null)
+  const [viewOpen, setViewOpen] = useState(false)
+  const [editContent, setEditContent] = useState('')
+
+  useEffect(() => {
+    fetchTestimonials()
+  }, [])
+
+  async function fetchTestimonials() {
+    setLoading(true)
+    try {
+      const response = await fetch('/api/admin/testimonials', { cache: 'no-store' })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to load testimonials')
+      }
+
+      setTestimonials(result.testimonials || [])
+    } catch (error) {
+      console.error('Testimonials load error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to load testimonials')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function openView(testimonial: Testimonial) {
+    setSelectedTestimonial(testimonial)
+    setEditContent(testimonial.content)
+    setViewOpen(true)
+  }
+
+  async function updateTestimonial(id: string, payload: Partial<Testimonial>) {
+    setSaving(true)
+    try {
+      const response = await fetch(`/api/admin/testimonials/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update testimonial')
+      }
+
+      setTestimonials((current) =>
+        current.map((item) => (item.id === id ? { ...item, ...result.testimonial } : item)),
+      )
+
+      if (selectedTestimonial?.id === id) {
+        setSelectedTestimonial((current) => current ? { ...current, ...result.testimonial } : current)
+      }
+
+      toast.success('Testimonial updated')
+    } catch (error) {
+      console.error('Update testimonial error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to update testimonial')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteTestimonial(id: string) {
+    if (!confirm('Delete this testimonial permanently?')) return
+
+    setSaving(true)
+    try {
+      const response = await fetch(`/api/admin/testimonials/${id}`, {
+        method: 'DELETE',
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to delete testimonial')
+      }
+
+      setTestimonials((current) => current.filter((item) => item.id !== id))
+      setViewOpen(false)
+      toast.success('Testimonial deleted')
+    } catch (error) {
+      console.error('Delete testimonial error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to delete testimonial')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const filteredTestimonials = testimonials.filter((testimonial) => {
+    const searchText = `${testimonial.client_name} ${testimonial.content} ${testimonial.session_type || ''}`.toLowerCase()
+    const matchesSearch = searchText.includes(searchQuery.toLowerCase())
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'pending' && !testimonial.is_approved) ||
+      (statusFilter === 'approved' && testimonial.is_approved) ||
+      (statusFilter === 'featured' && testimonial.is_featured)
+    return matchesSearch && matchesStatus
+  })
+
+  const stats = useMemo(
+    () => ({
+      total: testimonials.length,
+      pending: testimonials.filter((item) => !item.is_approved).length,
+      approved: testimonials.filter((item) => item.is_approved).length,
+      featured: testimonials.filter((item) => item.is_featured).length,
+    }),
+    [testimonials],
+  )
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="font-serif text-3xl font-bold">Testimonials</h1>
+          <p className="text-muted-foreground">Review, approve, feature, or remove client testimonials.</p>
+        </div>
+        <Button variant="outline" onClick={fetchTestimonials} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">Total</p><p className="text-3xl font-bold">{stats.total}</p></CardContent></Card>
+        <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">Pending</p><p className="text-3xl font-bold">{stats.pending}</p></CardContent></Card>
+        <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">Approved</p><p className="text-3xl font-bold">{stats.approved}</p></CardContent></Card>
+        <Card><CardContent className="p-5"><p className="text-sm text-muted-foreground">Featured</p><p className="text-3xl font-bold">{stats.featured}</p></CardContent></Card>
+      </div>
+
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-4 md:flex-row">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by client, content, or session type..."
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-full md:w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="featured">Featured</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquareQuote className="h-5 w-5" />
+            Client Testimonials
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Rating</TableHead>
+                  <TableHead>Content</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredTestimonials.map((testimonial) => (
+                  <TableRow key={testimonial.id}>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{testimonial.client_name}</p>
+                        <p className="text-xs text-muted-foreground">{testimonial.session_type || 'Client'}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell><div className="flex items-center gap-1">{renderStars(testimonial.rating)}</div></TableCell>
+                    <TableCell className="max-w-[420px] truncate">{testimonial.content}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant="outline" className={testimonial.is_approved ? statusStyles.approved : statusStyles.pending}>
+                          {testimonial.is_approved ? 'Approved' : 'Pending'}
+                        </Badge>
+                        {testimonial.is_featured && <Badge variant="outline" className={statusStyles.featured}>Featured</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatDate(testimonial.created_at)}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="icon" title="View" onClick={() => openView(testimonial)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={testimonial.is_approved ? 'Unapprove' : 'Approve'}
+                          onClick={() => updateTestimonial(testimonial.id, { is_approved: !testimonial.is_approved })}
+                          disabled={saving}
+                        >
+                          {testimonial.is_approved ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={testimonial.is_featured ? 'Remove Featured' : 'Feature'}
+                          onClick={() => updateTestimonial(testimonial.id, { is_featured: !testimonial.is_featured, is_approved: true })}
+                          disabled={saving}
+                        >
+                          <Star className={`h-4 w-4 ${testimonial.is_featured ? 'fill-primary text-primary' : ''}`} />
+                        </Button>
+                        <Button variant="ghost" size="icon" title="Delete" className="text-destructive" onClick={() => deleteTestimonial(testimonial.id)} disabled={saving}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {filteredTestimonials.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-14 text-center text-muted-foreground">
+                      {loading ? 'Loading testimonials...' : 'No testimonials found'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Testimonial Details</DialogTitle>
+            <DialogDescription>{selectedTestimonial?.client_name}</DialogDescription>
+          </DialogHeader>
+          {selectedTestimonial && (
+            <div className="space-y-4">
+              <div className="rounded-lg border p-4">
+                <div className="mb-2 flex items-center gap-1">{renderStars(selectedTestimonial.rating)}</div>
+                <p className="font-medium">{selectedTestimonial.client_name}</p>
+                <p className="text-sm text-muted-foreground">{selectedTestimonial.session_type || 'Client'} • {formatDate(selectedTestimonial.created_at)}</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Content</Label>
+                <Textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={6} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className={selectedTestimonial.is_approved ? statusStyles.approved : statusStyles.pending}>
+                  {selectedTestimonial.is_approved ? 'Approved' : 'Pending'}
+                </Badge>
+                {selectedTestimonial.is_featured && <Badge variant="outline" className={statusStyles.featured}>Featured</Badge>}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {selectedTestimonial && (
+              <>
+                <Button variant="outline" onClick={() => updateTestimonial(selectedTestimonial.id, { content: editContent })} disabled={saving}>
+                  Save Text
+                </Button>
+                <Button variant="outline" onClick={() => updateTestimonial(selectedTestimonial.id, { is_approved: !selectedTestimonial.is_approved })} disabled={saving}>
+                  {selectedTestimonial.is_approved ? 'Unapprove' : 'Approve'}
+                </Button>
+                <Button onClick={() => updateTestimonial(selectedTestimonial.id, { is_featured: !selectedTestimonial.is_featured, is_approved: true })} disabled={saving}>
+                  {selectedTestimonial.is_featured ? 'Remove Featured' : 'Feature'}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
