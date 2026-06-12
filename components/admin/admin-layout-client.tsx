@@ -99,6 +99,7 @@ const navSections: NavSection[] = [
     items: [
       { href: '/admin/gallery', icon: Image, label: 'Gallery', module: 'gallery' },
       { href: '/admin/portfolio', icon: Image, label: 'Portfolio', module: 'gallery' },
+      { href: '/admin/website-content', icon: Globe, label: 'Website Content', module: 'settings' },
       { href: '/admin/services', icon: FileText, label: 'Services', module: 'services' },
       { href: '/admin/testimonials', icon: MessageSquare, label: 'Testimonials', module: 'inquiries' },
     ],
