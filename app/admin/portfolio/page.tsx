@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Edit, Eye, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Edit, Eye, LinkIcon, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
 type GalleryItem = {
@@ -62,9 +62,11 @@ export default function AdminPortfolioPage() {
   const [items, setItems] = useState<GalleryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState<GalleryForm>(emptyForm)
+  const [imageSource, setImageSource] = useState<'upload' | 'url'>('upload')
 
   useEffect(() => {
     fetchItems()
@@ -87,6 +89,7 @@ export default function AdminPortfolioPage() {
 
   function openCreateDialog() {
     setForm(emptyForm)
+    setImageSource('upload')
     setDialogOpen(true)
   }
 
@@ -101,12 +104,39 @@ export default function AdminPortfolioPage() {
       is_public: item.is_public !== false,
       display_order: String(item.display_order || 0),
     })
+    setImageSource('url')
     setDialogOpen(true)
+  }
+
+  async function uploadPortfolioImage(file: File) {
+    if (!file) return
+
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/admin/portfolio-gallery/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Failed to upload image')
+
+      setForm((current) => ({ ...current, image_url: result.url }))
+      toast.success('Image uploaded successfully')
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Failed to upload image')
+    } finally {
+      setUploading(false)
+    }
   }
 
   async function saveItem() {
     if (!form.title.trim() || !form.image_url.trim()) {
-      toast.error('Title and image URL are required')
+      toast.error('Title and image are required')
       return
     }
 
@@ -269,7 +299,7 @@ export default function AdminPortfolioPage() {
           <DialogHeader>
             <DialogTitle>{form.id ? 'Edit Portfolio Image' : 'Add Portfolio Image'}</DialogTitle>
             <DialogDescription>
-              Add public gallery images using an image URL. Storage upload can be added in the next phase.
+              Upload a portfolio image to Supabase Storage or use an external image URL.
             </DialogDescription>
           </DialogHeader>
 
@@ -299,15 +329,64 @@ export default function AdminPortfolioPage() {
                 <Input type="number" value={form.display_order} onChange={(event) => setForm({ ...form, display_order: event.target.value })} />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Image URL</Label>
-              <Input value={form.image_url} onChange={(event) => setForm({ ...form, image_url: event.target.value })} placeholder="https://..." />
+
+            <div className="space-y-3 rounded-lg border p-3">
+              <Label>Image Source</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant={imageSource === 'upload' ? 'default' : 'outline'}
+                  onClick={() => setImageSource('upload')}
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload File
+                </Button>
+                <Button
+                  type="button"
+                  variant={imageSource === 'url' ? 'default' : 'outline'}
+                  onClick={() => setImageSource('url')}
+                >
+                  <LinkIcon className="mr-2 h-4 w-4" />
+                  Use Image URL
+                </Button>
+              </div>
+
+              {imageSource === 'upload' ? (
+                <div className="space-y-2">
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    disabled={uploading}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) uploadPortfolioImage(file)
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Uploads to gallery-images/portfolio/. Max file size: 35MB.
+                  </p>
+                  {uploading && <p className="text-sm text-primary">Uploading image...</p>}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    value={form.image_url}
+                    onChange={(event) => setForm({ ...form, image_url: event.target.value })}
+                    placeholder="https://..."
+                  />
+                </div>
+              )}
             </div>
+
             {form.image_url && (
-              <div className="relative aspect-video overflow-hidden rounded-lg border bg-muted">
-                <Image src={form.image_url} alt="Preview" fill className="object-cover" />
+              <div className="space-y-2">
+                <Label>Preview</Label>
+                <div className="relative aspect-video overflow-hidden rounded-lg border bg-muted">
+                  <Image src={form.image_url} alt="Preview" fill className="object-cover" />
+                </div>
               </div>
             )}
+
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
                 <p className="font-medium">Visible on public website</p>
@@ -326,7 +405,7 @@ export default function AdminPortfolioPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveItem} disabled={saving}>{saving ? 'Saving...' : 'Save Portfolio Image'}</Button>
+            <Button onClick={saveItem} disabled={saving || uploading}>{saving ? 'Saving...' : 'Save Portfolio Image'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
