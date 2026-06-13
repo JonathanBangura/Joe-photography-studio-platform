@@ -31,16 +31,16 @@ const paymentMethods = [
     icon: Wallet,
   },
   {
-    value: 'card',
-    title: 'Debit/Credit Card',
-    description: 'Visa, Mastercard and more',
-    icon: CreditCard,
-  },
-  {
     value: 'mobile_money',
     title: 'Mobile Money',
     description: 'Orange Money and Afrimoney accepted',
     icon: Smartphone,
+  },
+  {
+    value: 'card',
+    title: 'Debit/Credit Card',
+    description: 'Visa, Mastercard and more',
+    icon: CreditCard,
   },
 ]
 
