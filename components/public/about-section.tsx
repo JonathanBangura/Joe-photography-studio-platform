@@ -1,69 +1,85 @@
+'use client'
+
 import Image from 'next/image'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { Award, Users, Camera, Heart } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-
-const stats = [
-  { icon: Users, value: '500+', label: 'Happy Clients' },
-  { icon: Camera, value: '50k+', label: 'Photos Delivered' },
-  { icon: Award, value: '15+', label: 'Awards Won' },
-  { icon: Heart, value: '12+', label: 'Years Experience' },
-]
+import {
+  defaultPublicBusinessSettings,
+  type PublicBusinessSettings,
+} from '@/lib/business-settings-public'
 
 export function AboutSection() {
+  const [settings, setSettings] = useState<PublicBusinessSettings>(
+    defaultPublicBusinessSettings,
+  )
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const response = await fetch('/api/business-settings', { cache: 'no-store' })
+        const result = await response.json()
+
+        if (response.ok && result.settings) {
+          setSettings({ ...defaultPublicBusinessSettings, ...result.settings })
+        }
+      } catch (error) {
+        console.error('About settings load failed:', error)
+      }
+    }
+
+    loadSettings()
+  }, [])
+
+  const stats = [
+    { icon: Users, value: settings.clients_count, label: 'Happy Clients' },
+    { icon: Camera, value: settings.photos_delivered, label: 'Photos Delivered' },
+    { icon: Award, value: settings.awards_count, label: 'Awards Won' },
+    { icon: Heart, value: settings.years_experience, label: 'Years Experience' },
+  ]
+
   return (
     <section className="py-24 bg-card">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-          {/* Image Side */}
           <div className="relative">
             <div className="relative aspect-[4/5] rounded-2xl overflow-hidden">
               <Image
-                src="https://images.unsplash.com/photo-1554048612-b6a482bc67e5?q=80&w=1470&auto=format&fit=crop"
-                alt="Joe - Professional Photographer"
+                src={settings.about_image}
+                alt={settings.about_label || 'Studio story'}
                 fill
                 className="object-cover"
                 sizes="(max-width: 1024px) 100vw, 50vw"
               />
             </div>
-            {/* Floating card */}
             <div className="absolute -bottom-6 -right-6 bg-background border border-border rounded-xl p-6 shadow-xl max-w-xs">
-              <p className="font-serif text-2xl font-bold text-primary mb-1">12+ Years</p>
-              <p className="text-sm text-muted-foreground">Creating timeless memories</p>
+              <p className="font-serif text-2xl font-bold text-primary mb-1">
+                {settings.about_floating_title}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {settings.about_floating_subtitle}
+              </p>
             </div>
           </div>
 
-          {/* Content Side */}
           <div>
-            <p className="text-primary font-medium mb-3">About Joe Studio</p>
+            <p className="text-primary font-medium mb-3">{settings.about_label}</p>
             <h2 className="font-serif text-4xl sm:text-5xl font-bold mb-6">
-              Passionate About Capturing Your Story
+              {settings.about_title}
             </h2>
             <div className="space-y-4 text-muted-foreground mb-8">
-              <p>
-                Founded in 2012, Joe Studio has grown from a one-person passion project 
-                into a full-service photography studio known for capturing life&apos;s most 
-                precious moments with artistry and authenticity.
-              </p>
-              <p>
-                Our approach combines technical excellence with a deep understanding of 
-                human emotion. We believe every photograph should tell a story, evoke 
-                feelings, and stand the test of time.
-              </p>
-              <p>
-                Whether it&apos;s the joy of a wedding day, the pride of a professional portrait, 
-                or the warmth of a family gathering, we&apos;re dedicated to creating images 
-                that you&apos;ll treasure forever.
-              </p>
+              <p>{settings.about_story}</p>
+              <p>{settings.about_mission}</p>
+              <p>{settings.about_vision}</p>
             </div>
 
-            <Link href="/about">
+            <Link href={settings.about_button_link || '/about'}>
               <Button variant="outline" className="gap-2">
-                Learn More About Us
+                {settings.about_button_text}
               </Button>
             </Link>
 
-            {/* Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 mt-12 pt-8 border-t border-border">
               {stats.map((stat) => (
                 <div key={stat.label} className="text-center">
