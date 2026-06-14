@@ -43,6 +43,19 @@ function bookingReference() {
   return `BK-${stamp}-${Math.floor(1000 + Math.random() * 9000)}`
 }
 
+function paymentLinkToken() {
+  const random = Math.random().toString(36).slice(2, 10).toUpperCase()
+  const time = Date.now().toString(36).toUpperCase()
+  return `PAY-${time}-${random}`
+}
+
+function appBaseUrl(request: NextRequest) {
+  return (
+    process.env.NEXT_PUBLIC_APP_URL ||
+    `${request.headers.get('x-forwarded-proto') || 'https'}://${request.headers.get('host')}`
+  )
+}
+
 function normalizeEnvironment(value: unknown): BookingEnvironment {
   return value === 'outdoor' || value === 'event' ? value : 'indoor'
 }
@@ -309,6 +322,27 @@ export async function POST(request: NextRequest) {
 
     if (invoiceError) throw invoiceError
 
+    const token = paymentLinkToken()
+    const { data: paymentLink, error: paymentLinkError } = await supabase
+      .from('customer_payment_links')
+      .insert({
+        booking_id: booking.id,
+        invoice_id: invoice.id,
+        client_id: client.id,
+        token,
+        status: 'active',
+        metadata: {
+          booking_reference: reference,
+          created_from: bookingSource,
+        },
+      })
+      .select('*')
+      .single()
+
+    if (paymentLinkError) throw paymentLinkError
+
+    const paymentLinkUrl = `${appBaseUrl(request)}/pay/${token}`
+
     let payment = null
     if (depositPaidAmount > 0) {
       const { data: createdPayment, error: paymentError } = await supabase
@@ -351,12 +385,19 @@ export async function POST(request: NextRequest) {
       action: 'create',
       resource_type: 'booking',
       resource_id: booking.id,
-      new_data: { booking, client, invoice, payment, workflow },
+      new_data: { booking, client, invoice, payment, workflow, paymentLink },
       ip_address: request.headers.get('x-forwarded-for'),
       user_agent: request.headers.get('user-agent'),
     })
 
-    return NextResponse.json({ booking, client, invoice, payment, workflow })
+    return NextResponse.json({
+      booking,
+      client,
+      invoice,
+      payment,
+      workflow,
+      payment_link: { ...paymentLink, url: paymentLinkUrl },
+    })
   } catch (error) {
     console.error('Booking API error:', error)
     const message = error instanceof Error ? error.message : 'Unable to create booking'

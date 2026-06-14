@@ -46,6 +46,12 @@ import {
   Eye,
   Send,
   CreditCard,
+  Copy,
+  ExternalLink,
+  Link2,
+  RefreshCw,
+  Power,
+  CalendarClock,
   Printer,
   Percent,
 } from "lucide-react";
@@ -105,6 +111,20 @@ type InvoiceRecord = {
   }>;
 };
 
+
+type CustomerPaymentLink = {
+  id: string;
+  booking_id: string | null;
+  invoice_id: string | null;
+  client_id: string | null;
+  token: string;
+  status: 'active' | 'disabled' | 'expired';
+  expires_at: string | null;
+  payment_url: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 const statusStyles: Record<string, string> = {
   paid: "bg-green-500/20 text-green-500 border-green-500/30",
   pending: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
@@ -151,6 +171,11 @@ export default function AdminInvoicesPage() {
     value: "",
     reason: "",
   });
+  const [paymentLink, setPaymentLink] = useState<CustomerPaymentLink | null>(null);
+  const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+  const [paymentLinkSaving, setPaymentLinkSaving] = useState(false);
+  const [paymentLinkExpiry, setPaymentLinkExpiry] = useState('');
+
 
   useEffect(() => {
     fetchInvoices();
@@ -249,9 +274,71 @@ export default function AdminInvoicesPage() {
   }
 
 
+
+  async function loadPaymentLink(invoice: InvoiceRecord) {
+    setPaymentLinkLoading(true);
+    setPaymentLink(null);
+    setPaymentLinkExpiry('');
+
+    try {
+      const response = await fetch(`/api/admin/payment-links?invoice_id=${invoice.id}`, { cache: 'no-store' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to load payment link');
+      setPaymentLink(result.data || null);
+      setPaymentLinkExpiry(result.data?.expires_at ? String(result.data.expires_at).slice(0, 16) : '');
+    } catch (error) {
+      console.error('Load invoice payment link error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to load payment link');
+    } finally {
+      setPaymentLinkLoading(false);
+    }
+  }
+
+  async function createOrUpdatePaymentLink(options?: { regenerate?: boolean; status?: 'active' | 'disabled' | 'expired' }) {
+    if (!selectedInvoice?.id) return;
+
+    setPaymentLinkSaving(true);
+    try {
+      const isPatch = Boolean(paymentLink?.id) && !options?.regenerate;
+      const response = await fetch(
+        isPatch ? `/api/admin/payment-links/${paymentLink?.id}` : '/api/admin/payment-links',
+        {
+          method: isPatch ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invoice_id: selectedInvoice.id,
+            booking_id: selectedInvoice.booking_id,
+            expires_at: paymentLinkExpiry || null,
+            status: options?.status,
+            regenerate: Boolean(options?.regenerate),
+          }),
+        },
+      );
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to update payment link');
+
+      setPaymentLink(result.data || null);
+      setPaymentLinkExpiry(result.data?.expires_at ? String(result.data.expires_at).slice(0, 16) : '');
+      toast.success(options?.regenerate ? 'Payment link regenerated' : options?.status === 'disabled' ? 'Payment link disabled' : 'Payment link updated');
+    } catch (error) {
+      console.error('Invoice payment link update error:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to update payment link');
+    } finally {
+      setPaymentLinkSaving(false);
+    }
+  }
+
+  async function copyPaymentLink() {
+    if (!paymentLink?.payment_url) return;
+    await navigator.clipboard.writeText(paymentLink.payment_url);
+    toast.success('Payment link copied');
+  }
+
   function openInvoiceDialog(invoice: InvoiceRecord) {
     setSelectedInvoice(invoice);
     setViewOpen(true);
+    loadPaymentLink(invoice);
   }
 
   function openDiscountDialog(invoice: InvoiceRecord) {
@@ -1130,6 +1217,86 @@ export default function AdminInvoicesPage() {
                     {money(Math.max(Number((selectedInvoice as any).balance || 0), 0))}
                   </span>
                 </div>
+              </div>
+
+
+              <div className="rounded-lg border p-4 space-y-4 w-full">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="flex items-center gap-2 font-semibold">
+                      <Link2 className="h-4 w-4" /> Customer Payment Link
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Use this link when email fails or the customer needs the payment link by WhatsApp.
+                    </p>
+                  </div>
+                  {paymentLink?.status && (
+                    <Badge variant="outline" className="capitalize">
+                      {paymentLink.status}
+                    </Badge>
+                  )}
+                </div>
+
+                {paymentLinkLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading payment link...</p>
+                ) : paymentLink ? (
+                  <div className="space-y-3">
+                    <div className="rounded-md bg-muted p-3 text-sm break-all">
+                      {paymentLink.payment_url}
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                      <div className="space-y-2">
+                        <Label>Expiry Date</Label>
+                        <Input
+                          type="datetime-local"
+                          value={paymentLinkExpiry}
+                          onChange={(event) => setPaymentLinkExpiry(event.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">Leave blank for no expiry.</p>
+                      </div>
+                      <Button variant="outline" onClick={() => createOrUpdatePaymentLink()} disabled={paymentLinkSaving}>
+                        <CalendarClock className="mr-2 h-4 w-4" /> Save Expiry
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={copyPaymentLink}>
+                        <Copy className="mr-2 h-4 w-4" /> Copy Link
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => window.open(paymentLink.payment_url, '_blank')}>
+                        <ExternalLink className="mr-2 h-4 w-4" /> Open
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => createOrUpdatePaymentLink({ regenerate: true })} disabled={paymentLinkSaving}>
+                        <RefreshCw className="mr-2 h-4 w-4" /> Regenerate
+                      </Button>
+                      {paymentLink.status === 'disabled' ? (
+                        <Button size="sm" onClick={() => createOrUpdatePaymentLink({ status: 'active' })} disabled={paymentLinkSaving}>
+                          <Power className="mr-2 h-4 w-4" /> Enable
+                        </Button>
+                      ) : (
+                        <Button variant="destructive" size="sm" onClick={() => createOrUpdatePaymentLink({ status: 'disabled' })} disabled={paymentLinkSaving}>
+                          <Power className="mr-2 h-4 w-4" /> Disable
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">No customer payment link exists yet for this invoice.</p>
+                    <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                      <div className="space-y-2">
+                        <Label>Expiry Date</Label>
+                        <Input
+                          type="datetime-local"
+                          value={paymentLinkExpiry}
+                          onChange={(event) => setPaymentLinkExpiry(event.target.value)}
+                        />
+                      </div>
+                      <Button onClick={() => createOrUpdatePaymentLink()} disabled={paymentLinkSaving}>
+                        <Link2 className="mr-2 h-4 w-4" /> Create Link
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-lg border p-4 space-y-3 w-full">

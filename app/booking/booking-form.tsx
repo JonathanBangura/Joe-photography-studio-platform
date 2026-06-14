@@ -50,6 +50,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const [checkingAvailability, setCheckingAvailability] = useState(false)
   const [checkingSlots, setCheckingSlots] = useState(false)
   const [bookingReference, setBookingReference] = useState<string | null>(null)
+  const [paymentLink, setPaymentLink] = useState<string | null>(null)
 
   const [selectedService, setSelectedService] = useState<Service | null>(null)
   const [selectedDate, setSelectedDate] = useState('')
@@ -267,6 +268,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
       if (!response.ok) throw new Error(result.error || 'Booking failed')
 
       setBookingReference(result.booking?.booking_reference || result.booking?.id || null)
+      setPaymentLink(result.payment_link?.url || null)
       setStep(5)
     } catch (error) {
       console.error('Booking error:', error)
@@ -659,8 +661,26 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
               )}
 
               <p className="text-muted-foreground">
-                We will contact you to confirm availability and complete the deposit payment.
+                You can pay your deposit or balance using your secure payment link. The link can also be emailed or shared by WhatsApp.
               </p>
+
+              {paymentLink && (
+                <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+                  <Button asChild>
+                    <a href={paymentLink}>Pay Deposit / Balance Now</a>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      navigator.clipboard.writeText(paymentLink)
+                    }}
+                  >
+                    Copy Payment Link
+                  </Button>
+                </div>
+              )}
+
             </CardContent>
           </Card>
         )}
