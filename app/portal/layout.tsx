@@ -1,30 +1,8 @@
-import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
 import { PortalLayoutClient } from '@/components/portal/portal-layout-client'
+import { getPortalSession } from '@/lib/portal-data'
 
-export default async function PortalLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  const supabase = await createClient()
-  
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
-    redirect('/auth/login')
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  // If user is admin/staff, redirect to admin
-  if (profile?.role === 'admin' || profile?.role === 'staff') {
-    redirect('/admin')
-  }
+export default async function PortalLayout({ children }: { children: React.ReactNode }) {
+  const { user, profile } = await getPortalSession()
 
   return (
     <PortalLayoutClient
