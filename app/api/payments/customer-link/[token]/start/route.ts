@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createVultPaymentLink, mapPaymentMethodToVultType } from '@/lib/vult'
 
 type Params = {
   params: Promise<{ token: string }>
@@ -14,7 +15,22 @@ function money(value: unknown) {
 function createOrderId() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
   const random = Math.random().toString(36).slice(2, 8).toUpperCase()
-  return `PAY-${stamp}-${random}`
+  return `JSP-${stamp}-${random}`
+}
+
+function isExpired(value?: string | null) {
+  if (!value) return false
+  return new Date(value).getTime() < Date.now()
+}
+
+function getInvoiceTotalSle(invoice: any) {
+  if (invoice?.total_amount_sle !== null && invoice?.total_amount_sle !== undefined) {
+    return money(invoice.total_amount_sle)
+  }
+
+  const totalUsd = money(invoice?.total_amount || 0)
+  const exchangeRate = money(invoice?.exchange_rate || 1)
+  return money(totalUsd * exchangeRate)
 }
 
 export async function POST(request: Request, { params }: Params) {
@@ -43,6 +59,7 @@ export async function POST(request: Request, { params }: Params) {
     if (linkError) throw linkError
     if (!link) return NextResponse.json({ error: 'Payment link not found.' }, { status: 404 })
     if (link.status !== 'active') return NextResponse.json({ error: 'This payment link is not active.' }, { status: 403 })
+    if (isExpired(link.expires_at)) return NextResponse.json({ error: 'This payment link has expired. Please contact the studio.' }, { status: 403 })
 
     const { data: payments, error: paymentsError } = await supabase
       .from('payments')
@@ -52,21 +69,28 @@ export async function POST(request: Request, { params }: Params) {
     if (paymentsError) throw paymentsError
 
     const paidAmount = money(
-      (payments || []).filter((payment) => payment.payment_status !== 'failed').reduce((sum, payment) => {
-        const applied = payment.applied_amount === null || payment.applied_amount === undefined
-          ? payment.amount
-          : payment.applied_amount
-        return sum + Number(applied || 0)
-      }, 0),
+      (payments || [])
+        .filter((payment) => payment.payment_status !== 'failed')
+        .reduce((sum, payment) => {
+          const applied = payment.applied_amount === null || payment.applied_amount === undefined
+            ? payment.amount
+            : payment.applied_amount
+          return sum + Number(applied || 0)
+        }, 0),
     )
 
-    const exchangeRate = Number(link.invoice?.exchange_rate || link.booking?.exchange_rate || 24)
-    const totalAmountUsd = money(link.invoice?.total_amount || 0)
-    const totalAmountSle = money(link.invoice?.total_amount_sle || totalAmountUsd * exchangeRate)
-    const balanceAmount = money(Math.max(totalAmountSle - paidAmount, 0))
+    const totalAmount = getInvoiceTotalSle(link.invoice)
+    const balanceAmount = money(Math.max(totalAmount - paidAmount, 0))
     const appliedAmount = money(Math.min(amount, balanceAmount))
     const tipAmount = money(Math.max(amount - balanceAmount, 0))
     const orderId = createOrderId()
+    const vultType = mapPaymentMethodToVultType(paymentMethod)
+
+    const vult = await createVultPaymentLink({
+      orderId,
+      amount,
+      type: vultType,
+    })
 
     const { data: order, error: orderError } = await supabase
       .from('payment_orders')
@@ -82,14 +106,17 @@ export async function POST(request: Request, { params }: Params) {
         currency: 'SLE',
         payment_method: paymentMethod,
         processor: 'vult',
+        processor_request_id: null,
+        payment_url: vult.link,
         status: 'pending',
         metadata: {
           source: 'customer_payment_link',
+          vult_type: vultType,
+          vult_code: vult.code,
+          vult_response: vult.result,
           balance_before_payment: balanceAmount,
-          invoice_total_usd: totalAmountUsd,
-          invoice_total_sle: totalAmountSle,
-          exchange_rate: exchangeRate,
-          note: 'Vult payment link generation will be connected in the next Vult integration phase.',
+          invoice_total_sle: totalAmount,
+          paid_before_payment: paidAmount,
         },
       })
       .select('*')
@@ -98,7 +125,7 @@ export async function POST(request: Request, { params }: Params) {
     if (orderError) throw orderError
 
     await supabase.from('audit_logs').insert({
-      action: 'create_payment_order',
+      action: 'create_vult_payment_order',
       resource_type: 'payment_order',
       resource_id: order.id,
       new_data: order,
@@ -106,15 +133,17 @@ export async function POST(request: Request, { params }: Params) {
       user_agent: request.headers.get('user-agent'),
     })
 
-    // Vult API will replace this placeholder in Phase 7A-3.
-    // For now, this safely creates the internal payment order and keeps the page usable.
     return NextResponse.json({
       success: true,
       order,
-      checkout_url: null,
-      message: 'Payment order created. Vult checkout link will be generated after Vult credentials are connected.',
+      checkout_url: vult.link,
+      payment_code: vult.code,
+      message: vult.code
+        ? 'Mobile money payment code generated.'
+        : 'Vult payment link generated.',
     })
   } catch (error) {
+    console.error('Start Vult payment error:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unable to start payment.' },
       { status: 500 },

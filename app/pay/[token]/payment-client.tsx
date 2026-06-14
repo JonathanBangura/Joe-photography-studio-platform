@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { CreditCard, Loader2, Smartphone, Wallet } from 'lucide-react'
+import { Copy, CreditCard, Loader2, Smartphone, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -19,11 +19,10 @@ type PaymentData = {
     total_amount: number
     total_amount_usd?: number
     total_amount_sle?: number
-    exchange_rate?: number
-    payment_currency?: string
     paid_amount: number
     balance_amount: number
     tip_amount: number
+    exchange_rate?: number
   }
 }
 
@@ -48,7 +47,7 @@ const paymentMethods = [
   },
 ]
 
-function formatMoney(value: unknown) {
+function formatSle(value: unknown) {
   return `SLE ${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -68,6 +67,7 @@ export function PaymentClient({ token }: { token: string }) {
   const [paying, setPaying] = useState(false)
   const [amount, setAmount] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('mobile_money')
+  const [paymentCode, setPaymentCode] = useState<string | null>(null)
 
   async function loadPaymentLink() {
     setLoading(true)
@@ -94,6 +94,12 @@ export function PaymentClient({ token }: { token: string }) {
   const overpayment = useMemo(() => Math.max(numericAmount - balance, 0), [numericAmount, balance])
   const appliedAmount = useMemo(() => Math.min(numericAmount, balance), [numericAmount, balance])
 
+  async function copyCode() {
+    if (!paymentCode) return
+    await navigator.clipboard.writeText(paymentCode)
+    toast.success('Payment code copied')
+  }
+
   async function startPayment() {
     if (!data) return
     if (!numericAmount || numericAmount <= 0) {
@@ -102,6 +108,7 @@ export function PaymentClient({ token }: { token: string }) {
     }
 
     setPaying(true)
+    setPaymentCode(null)
     try {
       const response = await fetch(`/api/payments/customer-link/${token}/start`, {
         method: 'POST',
@@ -113,6 +120,13 @@ export function PaymentClient({ token }: { token: string }) {
 
       if (result.checkout_url) {
         window.location.href = result.checkout_url
+        return
+      }
+
+      if (result.payment_code) {
+        setPaymentCode(result.payment_code)
+        toast.success('Mobile money payment code generated')
+        await loadPaymentLink()
         return
       }
 
@@ -172,13 +186,17 @@ export function PaymentClient({ token }: { token: string }) {
                 <p className="font-medium">{data.booking?.service?.name || 'Photography Session'}</p>
               </div>
               <div className="space-y-3 rounded-lg border p-4">
-                <div className="flex justify-between"><span>Total USD</span><strong>{formatUsd(data.totals.total_amount_usd || data.invoice?.total_amount || 0)}</strong></div>
-                <div className="flex justify-between"><span>Total Payable</span><strong>{formatMoney(data.totals.total_amount_sle || data.totals.total_amount)}</strong></div>
-                <div className="flex justify-between text-xs text-muted-foreground"><span>Exchange Rate</span><span>1 USD = SLE {Number(data.totals.exchange_rate || data.invoice?.exchange_rate || 24).toLocaleString()}</span></div>
-                <div className="flex justify-between"><span>Paid</span><strong>{formatMoney(data.totals.paid_amount)}</strong></div>
-                <div className="flex justify-between text-primary"><span>Balance</span><strong>{formatMoney(data.totals.balance_amount)}</strong></div>
+                {data.totals.total_amount_usd !== undefined && (
+                  <div className="flex justify-between"><span>Total USD</span><strong>{formatUsd(data.totals.total_amount_usd)}</strong></div>
+                )}
+                {data.totals.exchange_rate && (
+                  <div className="flex justify-between text-sm text-muted-foreground"><span>Exchange Rate</span><span>1 USD = SLE {Number(data.totals.exchange_rate).toLocaleString()}</span></div>
+                )}
+                <div className="flex justify-between"><span>Total Payable</span><strong>{formatSle(data.totals.total_amount)}</strong></div>
+                <div className="flex justify-between"><span>Paid</span><strong>{formatSle(data.totals.paid_amount)}</strong></div>
+                <div className="flex justify-between text-primary"><span>Balance</span><strong>{formatSle(data.totals.balance_amount)}</strong></div>
                 {data.totals.tip_amount > 0 && (
-                  <div className="flex justify-between text-muted-foreground"><span>Tips received</span><strong>{formatMoney(data.totals.tip_amount)}</strong></div>
+                  <div className="flex justify-between text-muted-foreground"><span>Tips received</span><strong>{formatSle(data.totals.tip_amount)}</strong></div>
                 )}
               </div>
               <div className="rounded-lg border p-4">
@@ -189,8 +207,8 @@ export function PaymentClient({ token }: { token: string }) {
                   <div className="space-y-2">
                     {data.payments.map((payment) => (
                       <div key={payment.id} className="flex justify-between text-sm">
-                        <span>{payment.payment_method || 'Payment'}</span>
-                        <span>{formatMoney(payment.amount)}</span>
+                        <span>{payment.payment_channel || payment.payment_method || 'Payment'}</span>
+                        <span>{formatSle(payment.amount)}</span>
                       </div>
                     ))}
                   </div>
@@ -202,7 +220,7 @@ export function PaymentClient({ token }: { token: string }) {
           <Card className="lg:col-span-3">
             <CardHeader>
               <CardTitle>Make a Payment</CardTitle>
-              <CardDescription>Pay by instalment or clear your remaining balance. All payments are processed in SLE.</CardDescription>
+              <CardDescription>Pay by instalment or clear your remaining balance. All Vult payments are processed in SLE.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
@@ -231,7 +249,7 @@ export function PaymentClient({ token }: { token: string }) {
 
               <div className="space-y-2">
                 <Label>Amount to Pay in SLE</Label>
-                <Input type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Enter amount in SLE" />
+                <Input type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
                 <div className="flex flex-wrap gap-2 pt-2">
                   {[25, 50, 100].map((percent) => {
                     const value = Number(((balance * percent) / 100).toFixed(2))
@@ -249,19 +267,32 @@ export function PaymentClient({ token }: { token: string }) {
 
               {overpayment > 0 && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700">
-                  You are paying {formatMoney(overpayment)} more than your current balance. This extra amount will be recorded as a tip to the studio.
+                  You are paying {formatSle(overpayment)} more than your current balance. This extra amount will be recorded as a tip to the studio.
+                </div>
+              )}
+
+              {paymentCode && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                  <p className="text-sm text-muted-foreground">Mobile money payment code</p>
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-background p-3 font-mono text-lg font-semibold">
+                    <span>{paymentCode}</span>
+                    <Button variant="outline" size="sm" onClick={copyCode}>
+                      <Copy className="mr-2 h-4 w-4" /> Copy
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">Dial or use this code to complete the mobile money payment. The invoice will update once Vult confirms payment.</p>
                 </div>
               )}
 
               <div className="rounded-lg border p-4 space-y-2">
-                <div className="flex justify-between"><span>Applied to invoice</span><strong>{formatMoney(appliedAmount)}</strong></div>
-                <div className="flex justify-between"><span>Tip</span><strong>{formatMoney(overpayment)}</strong></div>
-                <div className="flex justify-between text-lg"><span>Total to pay</span><strong>{formatMoney(numericAmount)}</strong></div>
+                <div className="flex justify-between"><span>Applied to invoice</span><strong>{formatSle(appliedAmount)}</strong></div>
+                <div className="flex justify-between"><span>Tip</span><strong>{formatSle(overpayment)}</strong></div>
+                <div className="flex justify-between text-lg"><span>Total to pay</span><strong>{formatSle(numericAmount)}</strong></div>
               </div>
 
               <Button className="w-full" size="lg" onClick={startPayment} disabled={paying}>
                 {paying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Continue to Payment
+                Continue to Vult Payment
               </Button>
             </CardContent>
           </Card>
