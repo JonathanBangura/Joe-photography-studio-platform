@@ -15,6 +15,11 @@ export type PublicBusinessSettings = {
   social_facebook: string
   social_twitter: string
   working_hours: string
+  base_currency: string
+  local_currency: string
+  payment_currency: string
+  usd_to_sle_rate: number
+  price_display_mode: 'usd_only' | 'sle_only' | 'both'
 
   hero_badge: string
   hero_title: string
@@ -71,6 +76,11 @@ export const defaultPublicBusinessSettings: PublicBusinessSettings = {
   social_facebook: '',
   social_twitter: '',
   working_hours: 'Mon - Fri: 9:00 AM - 6:00 PM\nSat: 10:00 AM - 4:00 PM\nSun: By Appointment',
+  base_currency: 'USD',
+  local_currency: 'SLE',
+  payment_currency: 'SLE',
+  usd_to_sle_rate: 24,
+  price_display_mode: 'both',
 
   hero_badge: 'Award-Winning Photography Studio',
   hero_title: 'Capturing Timeless Moments',

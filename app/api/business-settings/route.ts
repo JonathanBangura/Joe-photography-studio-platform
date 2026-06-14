@@ -17,6 +17,9 @@ function settingCategory(key: string) {
   if (
     key.includes('invoice') ||
     key.includes('currency') ||
+    key.includes('exchange_rate') ||
+    key.includes('usd_to_sle') ||
+    key.includes('price_display') ||
     key.includes('tax') ||
     key.includes('deposit')
   ) {

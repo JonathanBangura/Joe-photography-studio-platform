@@ -17,6 +17,10 @@ type PaymentData = {
   payments: any[]
   totals: {
     total_amount: number
+    total_amount_usd?: number
+    total_amount_sle?: number
+    exchange_rate?: number
+    payment_currency?: string
     paid_amount: number
     balance_amount: number
     tip_amount: number
@@ -46,6 +50,13 @@ const paymentMethods = [
 
 function formatMoney(value: unknown) {
   return `SLE ${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function formatUsd(value: unknown) {
+  return `$${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -161,7 +172,9 @@ export function PaymentClient({ token }: { token: string }) {
                 <p className="font-medium">{data.booking?.service?.name || 'Photography Session'}</p>
               </div>
               <div className="space-y-3 rounded-lg border p-4">
-                <div className="flex justify-between"><span>Total</span><strong>{formatMoney(data.totals.total_amount)}</strong></div>
+                <div className="flex justify-between"><span>Total USD</span><strong>{formatUsd(data.totals.total_amount_usd || data.invoice?.total_amount || 0)}</strong></div>
+                <div className="flex justify-between"><span>Total Payable</span><strong>{formatMoney(data.totals.total_amount_sle || data.totals.total_amount)}</strong></div>
+                <div className="flex justify-between text-xs text-muted-foreground"><span>Exchange Rate</span><span>1 USD = SLE {Number(data.totals.exchange_rate || data.invoice?.exchange_rate || 24).toLocaleString()}</span></div>
                 <div className="flex justify-between"><span>Paid</span><strong>{formatMoney(data.totals.paid_amount)}</strong></div>
                 <div className="flex justify-between text-primary"><span>Balance</span><strong>{formatMoney(data.totals.balance_amount)}</strong></div>
                 {data.totals.tip_amount > 0 && (
@@ -189,7 +202,7 @@ export function PaymentClient({ token }: { token: string }) {
           <Card className="lg:col-span-3">
             <CardHeader>
               <CardTitle>Make a Payment</CardTitle>
-              <CardDescription>Pay by instalment or clear your remaining balance.</CardDescription>
+              <CardDescription>Pay by instalment or clear your remaining balance. All payments are processed in SLE.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
@@ -217,8 +230,8 @@ export function PaymentClient({ token }: { token: string }) {
               </div>
 
               <div className="space-y-2">
-                <Label>Amount to Pay</Label>
-                <Input type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
+                <Label>Amount to Pay in SLE</Label>
+                <Input type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Enter amount in SLE" />
                 <div className="flex flex-wrap gap-2 pt-2">
                   {[25, 50, 100].map((percent) => {
                     const value = Number(((balance * percent) / 100).toFixed(2))

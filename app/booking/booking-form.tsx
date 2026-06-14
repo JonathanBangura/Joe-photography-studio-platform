@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CheckCircle, ArrowRight, ArrowLeft, Camera, CreditCard, AlertCircle, Lock, Check, X } from 'lucide-react'
+import { defaultCurrencySettings, formatDisplayPrice, formatSle, convertUsdToSle, type CurrencySettings } from '@/lib/currency'
 
 interface Service {
   id: string
@@ -65,6 +66,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
 
   const [depositPercentage, setDepositPercentage] = useState<'30' | '50'>('50')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [currencySettings, setCurrencySettings] = useState<CurrencySettings>(defaultCurrencySettings)
 
   const [formData, setFormData] = useState({
     name: clientInfo?.profile?.full_name || '',
@@ -77,16 +79,23 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
   const totalAmount = Number(selectedService?.base_price || 0)
+  const totalAmountSle = useMemo(() => convertUsdToSle(totalAmount, currencySettings.usd_to_sle_rate), [totalAmount, currencySettings.usd_to_sle_rate])
 
   const depositAmount = useMemo(
     () => Number(((totalAmount * Number(depositPercentage)) / 100).toFixed(2)),
     [totalAmount, depositPercentage],
   )
 
+  const depositAmountSle = useMemo(
+    () => convertUsdToSle(depositAmount, currencySettings.usd_to_sle_rate),
+    [depositAmount, currencySettings.usd_to_sle_rate],
+  )
+
   const balanceAmount = useMemo(
     () => Number((totalAmount - depositAmount).toFixed(2)),
     [totalAmount, depositAmount],
   )
+
 
   const selectedResource = resources.find((resource) => resource.id === resourceId)
   const availableResources = resources.filter((resource) => resource.available)
@@ -98,6 +107,22 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
   const maxDate = new Date()
   maxDate.setMonth(maxDate.getMonth() + 3)
   const maxDateStr = maxDate.toISOString().split('T')[0]
+
+  useEffect(() => {
+    async function loadCurrencySettings() {
+      try {
+        const response = await fetch('/api/business-settings', { cache: 'no-store' })
+        const result = await response.json()
+        if (response.ok && result.settings) {
+          setCurrencySettings({ ...defaultCurrencySettings, ...result.settings })
+        }
+      } catch (error) {
+        console.error('Booking currency settings load failed:', error)
+      }
+    }
+
+    loadCurrencySettings()
+  }, [])
 
   useEffect(() => {
     if (bookingEnvironment !== 'indoor') {
@@ -260,6 +285,10 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
           notes: formData.notes,
           deposit_percentage: Number(depositPercentage),
           deposit_paid_amount: 0,
+          total_amount: totalAmount,
+          exchange_rate: currencySettings.usd_to_sle_rate,
+          total_amount_sle: totalAmountSle,
+          deposit_required_amount_sle: depositAmountSle,
           profile_id: clientInfo?.profile?.id || null,
         }),
       })
@@ -322,7 +351,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
                         <CardTitle>{service.name}</CardTitle>
                         <CardDescription className="mt-1">{service.description}</CardDescription>
                       </div>
-                      <div className="text-2xl font-bold text-primary">${service.base_price}</div>
+                      <div className="text-right text-lg font-bold text-primary">{formatDisplayPrice(service.base_price, currencySettings)}</div>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -607,16 +636,21 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
                 <div className="rounded-lg border p-4 space-y-2">
                   <div className="flex justify-between">
                     <span>Total Session Fee</span>
-                    <strong>${totalAmount.toLocaleString()}</strong>
+                    <strong>{formatDisplayPrice(totalAmount, currencySettings)}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Deposit Required</span>
-                    <strong>${depositAmount.toLocaleString()}</strong>
+                    <strong>{formatDisplayPrice(depositAmount, currencySettings)}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Balance Due</span>
-                    <strong>${balanceAmount.toLocaleString()}</strong>
+                    <strong>{formatDisplayPrice(balanceAmount, currencySettings)}</strong>
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
+                  <p className="font-medium">Vult Payment Currency</p>
+                  <p className="text-muted-foreground">All online Vult payments will be processed in SLE at 1 USD = SLE {currencySettings.usd_to_sle_rate}. Deposit due in SLE: {formatSle(depositAmountSle)}.</p>
                 </div>
 
                 <div className="rounded-lg bg-primary/10 p-4 flex items-center gap-3">
