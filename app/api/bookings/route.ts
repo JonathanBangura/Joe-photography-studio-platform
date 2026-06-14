@@ -43,6 +43,36 @@ function bookingReference() {
   return `BK-${stamp}-${Math.floor(1000 + Math.random() * 9000)}`
 }
 
+async function getCurrencySettings(supabase: ReturnType<typeof createAdminClient>) {
+  const defaults = {
+    base_currency: 'USD',
+    local_currency: 'SLE',
+    payment_currency: 'SLE',
+    usd_to_sle_rate: 24,
+    price_display_mode: 'both',
+  }
+
+  const { data } = await supabase
+    .from('business_settings')
+    .select('key, value')
+    .in('key', ['base_currency', 'local_currency', 'payment_currency', 'usd_to_sle_rate', 'price_display_mode'])
+
+  const settings: Record<string, any> = { ...defaults }
+  ;(data || []).forEach((item) => {
+    settings[item.key] = item.value
+  })
+
+  return {
+    ...defaults,
+    ...settings,
+    usd_to_sle_rate: Number(settings.usd_to_sle_rate || defaults.usd_to_sle_rate),
+  }
+}
+
+function toSle(usdAmount: number, exchangeRate: number) {
+  return Number((Number(usdAmount || 0) * Number(exchangeRate || 0)).toFixed(2))
+}
+
 function paymentLinkToken() {
   const random = Math.random().toString(36).slice(2, 10).toUpperCase()
   const time = Date.now().toString(36).toUpperCase()
@@ -190,6 +220,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Selected service/package was not found.' }, { status: 404 })
     }
 
+    const currencySettings = await getCurrencySettings(supabase)
+    const exchangeRate = Number(body.exchange_rate || currencySettings.usd_to_sle_rate || 24)
+
     const bookingEnvironment = normalizeEnvironment(body.booking_environment)
     const privacyLevel = normalizePrivacy(body.privacy_level)
     const resourceId = body.resource_id ? String(body.resource_id) : null
@@ -254,8 +287,11 @@ export async function POST(request: NextRequest) {
 
     const depositPercentage = Number(body.deposit_percentage || 50)
     const totalAmount = Number(body.total_amount || service.base_price || 0)
+    const totalAmountSle = Number(body.total_amount_sle || toSle(totalAmount, exchangeRate))
     const depositRequiredAmount = Number(((totalAmount * depositPercentage) / 100).toFixed(2))
+    const depositRequiredAmountSle = Number(body.deposit_required_amount_sle || toSle(depositRequiredAmount, exchangeRate))
     const depositPaidAmount = Number(body.deposit_paid_amount || 0)
+    const depositPaidAmountSle = Number(body.deposit_paid_amount_sle || toSle(depositPaidAmount, exchangeRate))
     const depositStatus = depositPaidAmount >= depositRequiredAmount ? 'paid' : depositPaidAmount > 0 ? 'partial' : 'required'
     const bookingSource = body.booking_source === 'walk_in' ? 'walk_in' : 'online'
     const reference = bookingReference()
@@ -273,6 +309,10 @@ export async function POST(request: NextRequest) {
         location: body.location || (bookingEnvironment === 'outdoor' ? 'Outdoor' : 'Studio'),
         status: depositPaidAmount > 0 || bookingSource === 'walk_in' ? 'confirmed' : 'pending',
         total_amount: totalAmount,
+        currency: currencySettings.base_currency,
+        payment_currency: 'SLE',
+        exchange_rate: exchangeRate,
+        total_amount_sle: totalAmountSle,
         booking_source: bookingSource,
         booking_reference: reference,
         booking_environment: bookingEnvironment,
@@ -282,7 +322,9 @@ export async function POST(request: NextRequest) {
         override_reason: allowOverride ? body.override_reason || 'Admin override' : null,
         deposit_percentage: depositPercentage,
         deposit_required_amount: depositRequiredAmount,
+        deposit_required_amount_sle: depositRequiredAmountSle,
         deposit_paid_amount: depositPaidAmount,
+        deposit_paid_amount_sle: depositPaidAmountSle,
         deposit_payment_method: body.deposit_payment_method || null,
         deposit_status: depositStatus,
         created_by: body.created_by || null,
@@ -304,18 +346,25 @@ export async function POST(request: NextRequest) {
         invoice_number: invoiceNumber(),
 
         subtotal_amount: totalAmount,
+        subtotal_amount_sle: totalAmountSle,
+        currency: currencySettings.base_currency,
+        payment_currency: 'SLE',
+        exchange_rate: exchangeRate,
         discount_type: 'none',
         discount_value: 0,
         discount_amount: 0,
+        discount_amount_sle: 0,
         discount_reason: null,
 
         amount: totalAmount,
         tax_amount: 0,
+        tax_amount_sle: 0,
         total_amount: totalAmount,
+        total_amount_sle: totalAmountSle,
         payment_status: depositPaidAmount >= totalAmount ? 'paid' : depositPaidAmount > 0 ? 'partial' : 'pending',
         due_date: dueDate.toISOString().slice(0, 10),
         paid_date: depositPaidAmount >= totalAmount ? new Date().toISOString().slice(0, 10) : null,
-        notes: `Deposit required: ${depositPercentage}% (${depositRequiredAmount}). Booking ref: ${reference}`,
+        notes: `Deposit required: ${depositPercentage}% ($${depositRequiredAmount} / SLE ${depositRequiredAmountSle}). Booking ref: ${reference}`,
       })
       .select('*')
       .single()
@@ -349,7 +398,9 @@ export async function POST(request: NextRequest) {
         .from('payments')
         .insert({
           invoice_id: invoice.id,
-          amount: depositPaidAmount,
+          amount: depositPaidAmountSle,
+          applied_amount: depositPaidAmountSle,
+          tip_amount: 0,
           payment_method: body.deposit_payment_method || 'cash',
           transaction_id: body.transaction_id || null,
           notes: `Deposit payment for booking ${reference}`,

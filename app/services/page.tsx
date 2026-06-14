@@ -5,6 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Check, Camera, Heart, Users, Building2, Package, Baby, Sparkles, Calendar } from 'lucide-react'
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getPublicBusinessSettings } from '@/lib/business-settings-public'
+import { formatDisplayPrice } from '@/lib/currency'
 
 type Service = {
   id: string
@@ -63,12 +65,9 @@ function getServiceIcon(service: Service) {
   return Camera
 }
 
-function formatPrice(value: number) {
-  return `Starting at $${Number(value || 0).toLocaleString()}`
-}
-
 export default async function ServicesPage() {
   const services = await getServices()
+  const settings = await getPublicBusinessSettings()
 
   return (
     <div className="min-h-screen bg-background">
@@ -104,7 +103,7 @@ export default async function ServicesPage() {
                       <CardDescription className="text-pretty">{service.description}</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-2xl font-bold text-primary mb-6">{formatPrice(service.base_price)}</p>
+                      <p className="text-2xl font-bold text-primary mb-6">{formatDisplayPrice(service.base_price, settings, 'Starting at ')}</p>
                       <ul className="space-y-3 mb-6">
                         {features.map((feature) => (
                           <li key={feature} className="flex items-start gap-3 text-sm">

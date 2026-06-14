@@ -48,6 +48,11 @@ type BusinessSettings = {
   social_twitter: string
   timezone: string
   currency: string
+  base_currency: string
+  local_currency: string
+  payment_currency: string
+  usd_to_sle_rate: number
+  price_display_mode: 'usd_only' | 'sle_only' | 'both'
   tax_rate: number
   booking_notice_hours: number
   cancellation_hours: number
@@ -79,6 +84,11 @@ const defaultSettings: BusinessSettings = {
   social_twitter: '',
   timezone: 'America/New_York',
   currency: 'USD',
+  base_currency: 'USD',
+  local_currency: 'SLE',
+  payment_currency: 'SLE',
+  usd_to_sle_rate: 24,
+  price_display_mode: 'both',
   tax_rate: 0,
   booking_notice_hours: 24,
   cancellation_hours: 48,
@@ -479,24 +489,64 @@ export default function SettingsPage() {
               <CardDescription>Configure billing and invoice settings</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="rounded-lg border p-4 space-y-4">
+                <div>
+                  <h3 className="font-semibold">Currency & Exchange Rate</h3>
+                  <p className="text-sm text-muted-foreground">Service prices are stored in USD. Vult payments will always be processed in SLE.</p>
+                </div>
+
+                <div className="grid gap-6 sm:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="base_currency">Base Currency</Label>
+                    <Input id="base_currency" value={settings.base_currency} readOnly className="bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="local_currency">Local Currency</Label>
+                    <Input id="local_currency" value={settings.local_currency} onChange={(e) => updateSetting('local_currency', e.target.value.toUpperCase())} className="bg-background/50" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="payment_currency">Payment Currency</Label>
+                    <Input id="payment_currency" value={settings.payment_currency} readOnly className="bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="usd_to_sle_rate">USD → SLE Rate</Label>
+                    <Input
+                      id="usd_to_sle_rate"
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      value={settings.usd_to_sle_rate}
+                      onChange={(e) => updateSetting('usd_to_sle_rate', parseFloat(e.target.value) || 24)}
+                      className="bg-background/50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="price_display_mode">Public Price Display</Label>
+                    <Select value={settings.price_display_mode} onValueChange={(value) => updateSetting('price_display_mode', value)}>
+                      <SelectTrigger className="bg-background/50">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="usd_only">USD Only</SelectItem>
+                        <SelectItem value="sle_only">SLE Only</SelectItem>
+                        <SelectItem value="both">USD + SLE</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 p-4 text-sm">
+                    <p className="font-medium">Example</p>
+                    <p className="text-muted-foreground">$100 × {settings.usd_to_sle_rate || 24} = SLE {Number(100 * Number(settings.usd_to_sle_rate || 24)).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid gap-6 sm:grid-cols-3">
                 <div className="space-y-2">
-                  <Label htmlFor="currency">Currency</Label>
-                  <Select
-                    value={settings.currency}
-                    onValueChange={(value) => updateSetting('currency', value)}
-                  >
-                    <SelectTrigger className="bg-background/50">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="USD">USD ($)</SelectItem>
-                      <SelectItem value="EUR">EUR (€)</SelectItem>
-                      <SelectItem value="GBP">GBP (£)</SelectItem>
-                      <SelectItem value="CAD">CAD ($)</SelectItem>
-                      <SelectItem value="AUD">AUD ($)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="currency">Legacy Invoice Currency</Label>
+                  <Input id="currency" value={settings.currency} readOnly className="bg-muted" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tax_rate">Tax Rate (%)</Label>

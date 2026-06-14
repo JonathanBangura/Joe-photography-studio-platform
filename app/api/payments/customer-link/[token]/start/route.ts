@@ -60,8 +60,10 @@ export async function POST(request: Request, { params }: Params) {
       }, 0),
     )
 
-    const totalAmount = money(link.invoice?.total_amount || 0)
-    const balanceAmount = money(Math.max(totalAmount - paidAmount, 0))
+    const exchangeRate = Number(link.invoice?.exchange_rate || link.booking?.exchange_rate || 24)
+    const totalAmountUsd = money(link.invoice?.total_amount || 0)
+    const totalAmountSle = money(link.invoice?.total_amount_sle || totalAmountUsd * exchangeRate)
+    const balanceAmount = money(Math.max(totalAmountSle - paidAmount, 0))
     const appliedAmount = money(Math.min(amount, balanceAmount))
     const tipAmount = money(Math.max(amount - balanceAmount, 0))
     const orderId = createOrderId()
@@ -84,6 +86,9 @@ export async function POST(request: Request, { params }: Params) {
         metadata: {
           source: 'customer_payment_link',
           balance_before_payment: balanceAmount,
+          invoice_total_usd: totalAmountUsd,
+          invoice_total_sle: totalAmountSle,
+          exchange_rate: exchangeRate,
           note: 'Vult payment link generation will be connected in the next Vult integration phase.',
         },
       })

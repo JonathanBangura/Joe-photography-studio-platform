@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, Camera, Heart, Clock, Award, Sparkles, Users, Building2, Package, Baby } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { defaultCurrencySettings, formatDisplayPrice, type CurrencySettings } from '@/lib/currency'
 
 type PublicService = {
   id: string
@@ -42,10 +43,6 @@ function getServiceIcon(service: PublicService) {
   return Camera
 }
 
-function formatPrice(value: number) {
-  return `From $${Number(value || 0).toLocaleString()}`
-}
-
 function getServiceHref(service: PublicService) {
   return `/services#${String(service.session_type || service.id).toLowerCase()}`
 }
@@ -53,6 +50,7 @@ function getServiceHref(service: PublicService) {
 export function ServicesSection() {
   const [services, setServices] = useState<PublicService[]>(fallbackServices)
   const [loading, setLoading] = useState(true)
+  const [currencySettings, setCurrencySettings] = useState<CurrencySettings>(defaultCurrencySettings)
 
   useEffect(() => {
     async function loadServices() {
@@ -71,6 +69,22 @@ export function ServicesSection() {
     }
 
     loadServices()
+  }, [])
+
+  useEffect(() => {
+    async function loadCurrencySettings() {
+      try {
+        const response = await fetch('/api/business-settings', { cache: 'no-store' })
+        const result = await response.json()
+        if (response.ok && result.settings) {
+          setCurrencySettings({ ...defaultCurrencySettings, ...result.settings })
+        }
+      } catch (error) {
+        console.error('Currency settings load failed:', error)
+      }
+    }
+
+    loadCurrencySettings()
   }, [])
 
   const visibleServices = useMemo(() => services.slice(0, 6), [services])
@@ -100,7 +114,7 @@ export function ServicesSection() {
                     <h3 className="font-serif text-xl font-semibold mb-2 group-hover:text-primary transition-colors">{service.name}</h3>
                     <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{service.description}</p>
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-primary">{formatPrice(service.base_price)}</span>
+                      <span className="font-semibold text-primary">{formatDisplayPrice(service.base_price, currencySettings, 'From ')}</span>
                       <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
                     </div>
                   </CardContent>

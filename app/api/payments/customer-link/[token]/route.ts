@@ -42,6 +42,10 @@ export async function GET(_request: Request, { params }: Params) {
 
     if (paymentsError) throw paymentsError
 
+    const exchangeRate = Number(link.invoice?.exchange_rate || link.booking?.exchange_rate || 24)
+    const totalAmountUsd = money(link.invoice?.total_amount || 0)
+    const totalAmountSle = money(link.invoice?.total_amount_sle || totalAmountUsd * exchangeRate)
+
     const completedPayments = (payments || []).filter((payment) => payment.payment_status !== 'failed')
     const paidAmount = money(
       completedPayments.reduce((sum, payment) => {
@@ -52,8 +56,7 @@ export async function GET(_request: Request, { params }: Params) {
       }, 0),
     )
     const tipAmount = money(completedPayments.reduce((sum, payment) => sum + Number(payment.tip_amount || 0), 0))
-    const totalAmount = money(link.invoice?.total_amount || 0)
-    const balanceAmount = money(Math.max(totalAmount - paidAmount, 0))
+    const balanceAmount = money(Math.max(totalAmountSle - paidAmount, 0))
 
     return NextResponse.json({
       success: true,
@@ -64,7 +67,11 @@ export async function GET(_request: Request, { params }: Params) {
         client: link.client,
         payments: payments || [],
         totals: {
-          total_amount: totalAmount,
+          total_amount: totalAmountSle,
+          total_amount_usd: totalAmountUsd,
+          total_amount_sle: totalAmountSle,
+          exchange_rate: exchangeRate,
+          payment_currency: 'SLE',
           paid_amount: paidAmount,
           balance_amount: balanceAmount,
           tip_amount: tipAmount,
