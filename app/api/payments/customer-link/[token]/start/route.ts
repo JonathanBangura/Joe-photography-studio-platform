@@ -106,13 +106,14 @@ export async function POST(request: Request, { params }: Params) {
         currency: 'SLE',
         payment_method: paymentMethod,
         processor: 'vult',
-        processor_request_id: null,
+        processor_request_id: vult.requestId || null,
         payment_url: vult.link,
         status: 'pending',
         metadata: {
           source: 'customer_payment_link',
           vult_type: vultType,
           vult_code: vult.code,
+          vult_qr_code: vult.qrCode,
           vult_response: vult.result,
           balance_before_payment: balanceAmount,
           invoice_total_sle: totalAmount,
@@ -136,11 +137,20 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({
       success: true,
       order,
+      payment_method: paymentMethod,
+      vult_type: vultType,
       checkout_url: vult.link,
+      payment_url: vult.link,
       payment_code: vult.code,
-      message: vult.code
+      qr_code: vult.qrCode,
+      amount,
+      applied_amount: appliedAmount,
+      tip_amount: tipAmount,
+      message: paymentMethod === 'mobile_money'
         ? 'Mobile money payment code generated.'
-        : 'Vult payment link generated.',
+        : paymentMethod === 'vult_app'
+          ? 'Vult App payment link generated.'
+          : 'Card checkout link generated.',
     })
   } catch (error) {
     console.error('Start Vult payment error:', error)
