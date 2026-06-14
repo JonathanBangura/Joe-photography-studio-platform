@@ -53,19 +53,19 @@ const paymentMethods: Array<{
     asset: '/payment-assets/vult-logo.png',
   },
   {
+    value: 'mobile_money',
+    title: 'Mobile Money',
+    description: 'Orange Money & Afrimoney accepted',
+    icon: Smartphone,
+    asset: '/payment-assets/momo.png',
+  },
+  {
     value: 'card',
     title: 'Debit/Credit Card',
     description: 'Visa, Mastercard and more',
     icon: CreditCard,
     asset: '/payment-assets/card-icon.png',
     cardAssets: ['/payment-assets/visa.png', '/payment-assets/mastercard.png'],
-  },
-  {
-    value: 'mobile_money',
-    title: 'Mobile Money',
-    description: 'Orange Money & Afrimoney accepted',
-    icon: Smartphone,
-    asset: '/payment-assets/momo.png',
   },
 ]
 
