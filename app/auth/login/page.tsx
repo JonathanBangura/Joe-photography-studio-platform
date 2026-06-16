@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import type { StudioRole } from '@/lib/types'
+import { isBackOfficeStudioRole } from '@/lib/permissions'
 import { createAuditLog } from '@/lib/audit-log-client'
 
 export default function LoginPage() {
@@ -67,10 +67,7 @@ export default function LoginPage() {
 
       toast.success('Welcome back!')
 
-      const studioRole = profile.studio_role as StudioRole | null
-      const isBackOfficeUser = Boolean(
-        (studioRole && studioRole !== 'viewer') || profile.role === 'admin' || profile.role === 'staff'
-      )
+      const isBackOfficeUser = isBackOfficeStudioRole(profile.studio_role)
 
       router.push(isBackOfficeUser ? '/admin' : '/portal')
     }

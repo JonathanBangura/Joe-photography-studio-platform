@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { isBackOfficeStudioRole } from '@/lib/permissions'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -25,7 +26,9 @@ export async function GET(request: Request) {
           id: data.user.id,
           email: data.user.email!,
           full_name: data.user.user_metadata?.full_name || null,
-          role: data.user.user_metadata?.role || 'client',
+          role: 'client',
+          studio_role: 'viewer',
+          is_active: true,
         })
 
         // If user is a client, also create client record
@@ -39,15 +42,21 @@ export async function GET(request: Request) {
       // Check role for redirect
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, studio_role, is_active')
         .eq('id', data.user.id)
         .single()
 
+      const isBackOfficeUser = profile?.is_active !== false && isBackOfficeStudioRole(profile?.studio_role)
+
       if (redirectTo) {
+        if (redirectTo.startsWith('/admin') && !isBackOfficeUser) {
+          return NextResponse.redirect(`${origin}/portal`)
+        }
+
         return NextResponse.redirect(`${origin}${redirectTo}`)
       }
 
-      if (profile?.role === 'admin' || profile?.role === 'staff') {
+      if (isBackOfficeUser) {
         return NextResponse.redirect(`${origin}/admin`)
       }
 

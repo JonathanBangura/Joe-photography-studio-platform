@@ -26,7 +26,6 @@ import {
   BarChart3,
   History,
   ChevronDown,
-  RefreshCw,
   Banknote,
   Globe,
 } from 'lucide-react'
@@ -41,13 +40,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -143,19 +135,6 @@ interface AdminLayoutClientProps {
   } | null
 }
 
-const ALL_ROLES: StudioRole[] = [
-  'super_admin',
-  'studio_admin',
-  'studio_manager',
-  'photographer',
-  'photo_editor',
-  'receptionist',
-  'finance_officer',
-  'gallery_manager',
-  'marketing_manager',
-  'viewer',
-]
-
 export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
   const pathname = usePathname()
   const router = useRouter()
@@ -163,12 +142,9 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [expandedSections, setExpandedSections] = useState<string[]>(['Overview', 'Operations', 'Content', 'Finance', 'Resources', 'Administration'])
   const [permissions, setPermissions] = useState<RolePermission[]>([])
-  const [previewRole, setPreviewRole] = useState<StudioRole | null>(null)
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(true)
 
   const actualRole = user?.studio_role || 'viewer'
-  const effectiveRole = previewRole || actualRole
-  const isSuperAdmin = actualRole === 'super_admin'
 
   // Fetch permissions on mount
   useEffect(() => {
@@ -198,11 +174,11 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
       .map((section) => ({
         ...section,
         items: section.items.filter((item) => {
-          return canAccessModuleSync(permissions, effectiveRole, item.module)
+          return canAccessModuleSync(permissions, actualRole, item.module)
         }),
       }))
       .filter((section) => section.items.length > 0)
-  }, [permissions, effectiveRole, isLoadingPermissions])
+  }, [permissions, actualRole, isLoadingPermissions])
 
   const toggleSection = (title: string) => {
     setExpandedSections((prev) =>
@@ -369,38 +345,9 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Role Preview (Super Admin only) */}
-            {isSuperAdmin && (
-              <div className="hidden md:flex items-center gap-2">
-                <Select
-                  value={previewRole || 'actual'}
-                  onValueChange={(value) => setPreviewRole(value === 'actual' ? null : value as StudioRole)}
-                >
-                  <SelectTrigger className="w-[180px] h-9 text-xs">
-                    <SelectValue placeholder="Preview as role..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="actual">
-                      <span className="flex items-center gap-2">
-                        <RefreshCw className="w-3 h-3" />
-                        My Role ({ROLE_LABELS[actualRole]})
-                      </span>
-                    </SelectItem>
-                    <DropdownMenuSeparator />
-                    {ALL_ROLES.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {ROLE_LABELS[role]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {previewRole && (
-                  <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-600 border-amber-500/30">
-                    Preview Mode
-                  </Badge>
-                )}
-              </div>
-            )}
+            <Badge variant="outline" className="hidden md:inline-flex">
+              Role: {ROLE_LABELS[actualRole]}
+            </Badge>
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full" />
@@ -415,7 +362,7 @@ export function AdminLayoutClient({ children, user }: AdminLayoutClientProps) {
 
         {/* Page content */}
         <main className="flex-1 p-4 lg:p-6">
-          <PermissionGate role={effectiveRole} permissions={permissions} loading={isLoadingPermissions}>
+          <PermissionGate role={actualRole} permissions={permissions} loading={isLoadingPermissions}>
             {children}
           </PermissionGate>
         </main>

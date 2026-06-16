@@ -45,6 +45,7 @@ export default function SignUpPage() {
         data: {
           full_name: fullName,
           role: 'client',
+          studio_role: 'viewer',
         },
       },
     })

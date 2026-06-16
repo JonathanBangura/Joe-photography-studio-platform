@@ -66,6 +66,24 @@ export const ALL_STUDIO_ROLES: StudioRole[] = [
   'viewer',
 ]
 
+export const BACK_OFFICE_STUDIO_ROLES: StudioRole[] = [
+  'super_admin',
+  'studio_admin',
+  'studio_manager',
+  'photographer',
+  'photo_editor',
+  'receptionist',
+  'finance_officer',
+  'gallery_manager',
+  'marketing_manager',
+]
+
+const BACK_OFFICE_STUDIO_ROLE_SET = new Set<string>(BACK_OFFICE_STUDIO_ROLES)
+
+export function isBackOfficeStudioRole(role?: string | null): role is StudioRole {
+  return Boolean(role && BACK_OFFICE_STUDIO_ROLE_SET.has(role))
+}
+
 export const ALL_MODULES: Module[] = [
   'dashboard',
   'bookings',
