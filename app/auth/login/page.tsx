@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Camera, Eye, EyeOff, Loader2 } from 'lucide-react'
@@ -18,6 +18,29 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    async function redirectSignedInUser() {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) return
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('studio_role, is_active')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profile?.is_active === false) return
+
+      router.replace(isBackOfficeStudioRole(profile?.studio_role) ? '/admin' : '/portal')
+    }
+
+    redirectSignedInUser()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -48,7 +48,7 @@ export default async function PortalSettingsPage() {
           </p>
           <div className="flex flex-wrap gap-2">
             <Button asChild><Link href="/contact"><Mail className="mr-2 h-4 w-4" />Contact Studio</Link></Button>
-            <Button asChild variant="outline"><Link href="/booking"><Phone className="mr-2 h-4 w-4" />Book Another Session</Link></Button>
+            <Button asChild variant="outline"><Link href="/portal/bookings/new"><Phone className="mr-2 h-4 w-4" />Book Another Session</Link></Button>
           </div>
         </CardContent>
       </Card>
