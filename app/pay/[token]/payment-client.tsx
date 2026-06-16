@@ -410,12 +410,12 @@ export function PaymentClient({ token }: { token: string }) {
                   <img src="/payment-assets/vult-logo.png" alt="Vult" className="max-h-10 max-w-full object-contain" />
                 </div>
                 <div>
-                  <h2 className="text-3xl font-bold">Pay In-App (Vult)</h2>
-                  <p className="text-muted-foreground">Scan or open the Vult payment link.</p>
+                  <h2 className="text-3xl font-bold">Pay with (Vult)</h2>
+                  <p className="text-muted-foreground">Scan or open with Vult.</p>
                 </div>
               </div>
 
-              <p className="mb-4 text-lg">Scan this QR code with the Vult app:</p>
+              <p className="mb-4 text-lg">Scan this QR code:</p>
 
               <div className="mx-auto mb-6 flex h-[300px] w-[300px] items-center justify-center rounded-2xl border bg-white p-4">
                 {modal.qrCode || modal.paymentUrl ? (
@@ -423,14 +423,6 @@ export function PaymentClient({ token }: { token: string }) {
                 ) : (
                   <QrCode className="h-20 w-20 text-muted-foreground" />
                 )}
-              </div>
-
-              <Label>or copy link:</Label>
-              <div className="mt-2 flex gap-2">
-                <Input value={modal.paymentUrl || ''} readOnly className="font-mono text-sm" />
-                <Button variant="outline" onClick={() => copyText(modal.paymentUrl, 'Vult payment link copied')} disabled={!modal.paymentUrl}>
-                  Copy
-                </Button>
               </div>
 
               <Button className="mt-5 w-full" size="lg" onClick={() => modal.paymentUrl && window.open(modal.paymentUrl, '_blank')} disabled={!modal.paymentUrl}>

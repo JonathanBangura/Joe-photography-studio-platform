@@ -7,13 +7,13 @@ import {
   LayoutDashboard,
   Calendar,
   Image,
-  FileText,
   CreditCard,
   Settings,
   LogOut,
   Menu,
   X,
   Bell,
+  ReceiptText,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -33,9 +33,9 @@ import { toast } from 'sonner'
 const navItems = [
   { href: '/portal', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/portal/bookings', icon: Calendar, label: 'My Bookings' },
-  { href: '/portal/galleries', icon: Image, label: 'My Galleries' },
-  { href: '/portal/contracts', icon: FileText, label: 'Contracts' },
-  { href: '/portal/invoices', icon: CreditCard, label: 'Invoices' },
+  { href: '/portal/invoices', icon: ReceiptText, label: 'Invoices' },
+  { href: '/portal/payments', icon: CreditCard, label: 'Payments' },
+  { href: '/portal/gallery', icon: Image, label: 'My Galleries' },
   { href: '/portal/settings', icon: Settings, label: 'Settings' },
 ]
 
@@ -62,22 +62,19 @@ export function PortalLayoutClient({ children, user }: PortalLayoutClientProps) 
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="sticky top-0 z-50 border-b border-border bg-card">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo */}
+          <div className="flex h-16 items-center justify-between">
             <Link href="/portal" className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
-                <Camera className="w-5 h-5 text-primary" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10">
+                <Camera className="h-5 w-5 text-primary" />
               </div>
               <span className="font-serif text-lg font-semibold">
                 Joe<span className="text-primary">Studio</span>
               </span>
             </Link>
 
-            {/* Desktop Nav */}
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden items-center gap-1 md:flex">
               {navItems.map((item) => {
                 const isActive = pathname === item.href || (item.href !== '/portal' && pathname.startsWith(item.href))
                 return (
@@ -85,31 +82,30 @@ export function PortalLayoutClient({ children, user }: PortalLayoutClientProps) 
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                      'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                       isActive
                         ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                     )}
                   >
-                    <item.icon className="w-4 h-4" />
+                    <item.icon className="h-4 w-4" />
                     {item.label}
                   </Link>
                 )
               })}
             </nav>
 
-            {/* Right side */}
             <div className="flex items-center gap-3">
               <Button variant="ghost" size="icon" className="relative">
-                <Bell className="w-5 h-5" />
+                <Bell className="h-5 w-5" />
               </Button>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-2">
-                    <Avatar className="w-8 h-8">
+                    <Avatar className="h-8 w-8">
                       <AvatarImage src={user.avatar_url || ''} />
-                      <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                      <AvatarFallback className="bg-primary text-xs text-primary-foreground">
                         {user.full_name?.charAt(0) || user.email.charAt(0)}
                       </AvatarFallback>
                     </Avatar>
@@ -125,39 +121,37 @@ export function PortalLayoutClient({ children, user }: PortalLayoutClientProps) 
                   <DropdownMenuSeparator />
                   <DropdownMenuItem asChild>
                     <Link href="/portal/settings">
-                      <Settings className="w-4 h-4 mr-2" />
+                      <Settings className="mr-2 h-4 w-4" />
                       Settings
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href="/">
-                      <Camera className="w-4 h-4 mr-2" />
+                      <Camera className="mr-2 h-4 w-4" />
                       View Website
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
-                    <LogOut className="w-4 h-4 mr-2" />
+                    <LogOut className="mr-2 h-4 w-4" />
                     Sign Out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* Mobile menu button */}
               <Button
                 variant="ghost"
                 size="icon"
                 className="md:hidden"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               >
-                {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </Button>
             </div>
           </div>
 
-          {/* Mobile Nav */}
           {mobileMenuOpen && (
-            <nav className="md:hidden pb-4 border-t border-border pt-4 animate-fade-in">
+            <nav className="border-t border-border pb-4 pt-4 md:hidden">
               <div className="flex flex-col gap-1">
                 {navItems.map((item) => {
                   const isActive = pathname === item.href || (item.href !== '/portal' && pathname.startsWith(item.href))
@@ -167,13 +161,13 @@ export function PortalLayoutClient({ children, user }: PortalLayoutClientProps) 
                       href={item.href}
                       onClick={() => setMobileMenuOpen(false)}
                       className={cn(
-                        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                        'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
                         isActive
                           ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                       )}
                     >
-                      <item.icon className="w-5 h-5" />
+                      <item.icon className="h-5 w-5" />
                       {item.label}
                     </Link>
                   )
@@ -184,10 +178,7 @@ export function PortalLayoutClient({ children, user }: PortalLayoutClientProps) 
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {children}
-      </main>
+      <main className="container mx-auto px-4 py-8 sm:px-6 lg:px-8">{children}</main>
     </div>
   )
 }
