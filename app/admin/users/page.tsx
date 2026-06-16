@@ -100,10 +100,7 @@ const roleColors: Record<StudioRole, string> = {
 }
 
 function getEffectiveStudioRole(user: Profile): StudioRole {
-  if (user.studio_role) return user.studio_role
-  if (user.role === 'admin') return 'studio_admin'
-  if (user.role === 'staff') return 'studio_manager'
-  return 'viewer'
+  return user.studio_role || 'viewer'
 }
 
 function getLegacyRoleFromStudioRole(studioRole: StudioRole): LegacyUserRole {

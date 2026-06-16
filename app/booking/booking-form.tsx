@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,9 +44,10 @@ interface BookingFormProps {
     client: { id?: string; address: string | null; city: string | null } | null
   } | null
   isLoggedIn: boolean
+  mode?: 'public' | 'portal'
 }
 
-export function BookingForm({ services, clientInfo }: BookingFormProps) {
+export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFormProps) {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
@@ -75,6 +77,8 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
     location: clientInfo?.client?.address || '',
     notes: '',
   })
+
+  const isPortalMode = mode === 'portal'
 
   const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
@@ -272,6 +276,7 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           booking_source: 'online',
+          portal_booking: isPortalMode,
           service_id: selectedService.id,
           booking_date: selectedDate,
           start_time: selectedTime,
@@ -334,7 +339,9 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
             <div className="text-center">
               <h1 className="text-3xl md:text-4xl font-bold mb-4">Choose Your Package</h1>
               <p className="text-muted-foreground max-w-2xl mx-auto">
-                Select a photography package. You can submit your booking without creating an account.
+                {isPortalMode
+                  ? 'Select a photography package. This booking will be added to your client portal account.'
+                  : 'Select a photography package. You can submit your booking without creating an account.'}
               </p>
             </div>
 
@@ -534,7 +541,9 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
             <CardHeader>
               <CardTitle>Your Details</CardTitle>
               <CardDescription>
-                No account is required. We will use these details to contact you about the booking.
+                {isPortalMode
+                  ? 'These details come from your client account. You can update contact details with the studio team.'
+                  : 'No account is required. We will use these details to contact you about the booking.'}
               </CardDescription>
             </CardHeader>
 
@@ -542,18 +551,18 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Full Name *</Label>
-                  <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+                  <Input value={formData.name} disabled={isPortalMode} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
                 </div>
 
                 <div className="space-y-2">
                   <Label>Phone</Label>
-                  <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+                  <Input value={formData.phone} disabled={isPortalMode} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
                 </div>
               </div>
 
               <div className="space-y-2">
                 <Label>Email</Label>
-                <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                <Input type="email" value={formData.email} disabled={isPortalMode} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
               </div>
 
               <div className="space-y-2">
@@ -713,6 +722,12 @@ export function BookingForm({ services, clientInfo }: BookingFormProps) {
                     Copy Payment Link
                   </Button>
                 </div>
+              )}
+
+              {isPortalMode && (
+                <Button asChild variant="outline">
+                  <Link href="/portal/bookings">Back to My Bookings</Link>
+                </Button>
               )}
 
             </CardContent>

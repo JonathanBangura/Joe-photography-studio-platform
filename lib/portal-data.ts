@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isBackOfficeStudioRole } from '@/lib/permissions'
 
 type SupabaseAdmin = ReturnType<typeof createAdminClient>
 
@@ -13,6 +14,7 @@ export type PortalProfile = {
   avatar_url: string | null
   role: string | null
   studio_role: string | null
+  is_active?: boolean | null
 }
 
 export type PortalClient = {
@@ -75,7 +77,7 @@ export async function getPortalSession(): Promise<PortalSession> {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (profile?.role === 'admin' || profile?.role === 'staff' || profile?.studio_role === 'super_admin') {
+  if (profile?.is_active !== false && isBackOfficeStudioRole(profile?.studio_role)) {
     redirect('/admin')
   }
 

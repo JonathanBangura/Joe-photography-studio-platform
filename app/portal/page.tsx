@@ -125,7 +125,7 @@ export default async function PortalDashboard() {
               <div className="py-8 text-center">
                 <Calendar className="mx-auto mb-3 h-12 w-12 text-muted-foreground/30" />
                 <p className="mb-4 text-muted-foreground">No upcoming sessions</p>
-                <Button asChild variant="outline" size="sm"><Link href="/booking">Book a Session</Link></Button>
+                <Button asChild variant="outline" size="sm"><Link href="/portal/bookings/new">Book a Session</Link></Button>
               </div>
             ) : (
               <div className="space-y-4">

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { AdminLayoutClient } from '@/components/admin/admin-layout-client'
+import { isBackOfficeStudioRole } from '@/lib/permissions'
 
 export default async function AdminLayout({
   children,
@@ -22,14 +23,15 @@ export default async function AdminLayout({
     .eq('id', user.id)
     .single()
 
-  const studioRole = profile?.studio_role || (profile?.role === 'admin' ? 'studio_admin' : profile?.role === 'staff' ? 'studio_manager' : 'viewer')
-
   if (!profile || profile.is_active === false) {
     redirect('/auth/login')
   }
 
-  // Allow back-office users into admin. Client-only users stay in the client portal.
-  if (profile.role === 'client' && studioRole === 'viewer') {
+  const studioRole = profile.studio_role || 'viewer'
+
+  // Admin access is controlled only by profiles.studio_role.
+  // The legacy profiles.role column is kept for client/staff labels and must not grant access.
+  if (!isBackOfficeStudioRole(studioRole)) {
     redirect('/portal')
   }
 

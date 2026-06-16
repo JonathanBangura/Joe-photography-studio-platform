@@ -139,7 +139,7 @@ export default async function PortalBookingsPage() {
           <h1 className="text-3xl font-bold">My Bookings</h1>
           <p className="text-muted-foreground">View your upcoming and past sessions.</p>
         </div>
-        <Button asChild><Link href="/booking"><Calendar className="mr-2 h-4 w-4" />Book New Session</Link></Button>
+        <Button asChild><Link href="/portal/bookings/new"><Calendar className="mr-2 h-4 w-4" />Book New Session</Link></Button>
       </div>
 
       <section>
@@ -149,7 +149,7 @@ export default async function PortalBookingsPage() {
             <CardContent className="py-12 text-center">
               <Calendar className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
               <p className="text-muted-foreground">No upcoming sessions scheduled.</p>
-              <Button asChild className="mt-4"><Link href="/booking">Book a Session</Link></Button>
+              <Button asChild className="mt-4"><Link href="/portal/bookings/new">Book a Session</Link></Button>
             </CardContent>
           </Card>
         ) : (

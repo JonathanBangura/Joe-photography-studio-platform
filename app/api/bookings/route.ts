@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
 
 const WORKFLOW_STAGES = [
   { name: 'Booking Received', description: 'Booking has been created and is awaiting confirmation.', color: '#F59E0B', sort_order: 1 },
@@ -195,13 +196,43 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const supabase = createAdminClient()
+    const isPortalBooking = body.portal_booking === true
 
     const serviceId = String(body.service_id || '')
     const bookingDate = String(body.booking_date || '')
     const startTime = String(body.start_time || '')
-    const fullName = String(body.full_name || body.name || '').trim()
-    const email = String(body.email || '').trim().toLowerCase()
-    const phone = String(body.phone || '').trim()
+    let fullName = String(body.full_name || body.name || '').trim()
+    let email = String(body.email || '').trim().toLowerCase()
+    let phone = String(body.phone || '').trim()
+    let authUserId: string | null = null
+
+    if (isPortalBooking) {
+      const authSupabase = await createClient()
+      const {
+        data: { user },
+      } = await authSupabase.auth.getUser()
+
+      if (!user) {
+        return NextResponse.json({ error: 'Please sign in to book from the client portal.' }, { status: 401 })
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, phone, is_active, studio_role')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+
+      if (!profile || profile.is_active === false) {
+        return NextResponse.json({ error: 'Your client profile is inactive or unavailable.' }, { status: 403 })
+      }
+
+      authUserId = user.id
+      fullName = fullName || String(profile.full_name || user.user_metadata?.full_name || user.email || '').trim()
+      email = email || String(profile.email || user.email || '').trim().toLowerCase()
+      phone = phone || String(profile.phone || '').trim()
+    }
 
     if (!serviceId || !bookingDate || !startTime || !fullName || (!email && !phone)) {
       return NextResponse.json(
@@ -243,7 +274,11 @@ export async function POST(request: NextRequest) {
     })
 
     let client = null
-    if (email) {
+    if (authUserId) {
+      const { data } = await supabase.from('clients').select('*').eq('profile_id', authUserId).maybeSingle()
+      client = data
+    }
+    if (!client && email) {
       const { data } = await supabase.from('clients').select('*').eq('email', email).maybeSingle()
       client = data
     }
@@ -259,6 +294,7 @@ export async function POST(request: NextRequest) {
           full_name: fullName,
           email: email || client.email,
           phone: phone || client.phone,
+          profile_id: client.profile_id || authUserId || null,
           address: body.address || body.location || client.address || null,
           city: body.city || client.city || null,
           preferred_contact: body.preferred_contact || client.preferred_contact || 'phone',
@@ -269,7 +305,7 @@ export async function POST(request: NextRequest) {
       const { data: createdClient, error: clientError } = await supabase
         .from('clients')
         .insert({
-          profile_id: body.profile_id || null,
+          profile_id: authUserId,
           full_name: fullName,
           email: email || null,
           phone: phone || null,
@@ -327,7 +363,7 @@ export async function POST(request: NextRequest) {
         deposit_paid_amount_sle: depositPaidAmountSle,
         deposit_payment_method: body.deposit_payment_method || null,
         deposit_status: depositStatus,
-        created_by: body.created_by || null,
+        created_by: authUserId || body.created_by || null,
         notes: body.notes || null,
       })
       .select('*')

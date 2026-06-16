@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { createClient } from "@/lib/supabase/server"
-
-const ADMIN_ROLES = new Set([
-  "super_admin",
-  "studio_admin",
-  "studio_manager",
-  "finance_officer",
-  "gallery_manager",
-])
+import { isBackOfficeStudioRole } from "@/lib/permissions"
 
 export async function requireAdminContext() {
   const authSupabase = await createClient()
@@ -32,10 +25,9 @@ export async function requireAdminContext() {
   if (error) throw error
 
   const studioRole = String(profile?.studio_role || "")
-  const legacyRole = String(profile?.role || "")
   const isAllowed =
     profile?.is_active !== false &&
-    (ADMIN_ROLES.has(studioRole) || legacyRole === "admin")
+    isBackOfficeStudioRole(studioRole)
 
   if (!isAllowed) {
     return {
