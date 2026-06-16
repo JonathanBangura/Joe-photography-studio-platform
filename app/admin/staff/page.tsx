@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { toast } from 'sonner'
 import {
   Calendar,
@@ -221,9 +222,12 @@ export default function StaffPage() {
   async function handleEditSave() {
     if (!editStaff) return
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
+    try {
+      await adminDbMutation({
+        table: 'profiles',
+        action: 'update',
+        id: editStaff.id,
+        payload: {
         full_name: editStaff.full_name,
         phone: editStaff.phone,
         department: editStaff.department,
@@ -232,12 +236,10 @@ export default function StaffPage() {
         bio: editStaff.bio,
         emergency_contact: editStaff.emergency_contact,
         emergency_phone: editStaff.emergency_phone,
-        updated_at: new Date().toISOString(),
+        },
       })
-      .eq('id', editStaff.id)
-
-    if (error) {
-      toast.error('Failed to update staff member')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update staff member')
       return
     }
 
@@ -276,13 +278,16 @@ export default function StaffPage() {
       updated_at: new Date().toISOString(),
     }))
 
-    const { error } = await supabase
-      .from('staff_schedules')
-      .upsert(rows, { onConflict: 'staff_id,day_of_week' })
-
-    if (error) {
+    try {
+      await adminDbMutation({
+        table: 'staff_schedules',
+        action: 'upsert',
+        payload: rows,
+        onConflict: 'staff_id,day_of_week',
+      })
+    } catch (error) {
       console.error(error)
-      toast.error('Failed to save schedule. Ensure staff_schedules has a unique constraint on (staff_id, day_of_week).')
+      toast.error(error instanceof Error ? error.message : 'Failed to save schedule. Ensure staff_schedules has a unique constraint on (staff_id, day_of_week).')
       setSavingSchedule(false)
       return
     }
@@ -299,17 +304,21 @@ export default function StaffPage() {
       return
     }
 
-    const { error } = await supabase.from('time_off_requests').insert({
-      staff_id: timeOffDraft.staff_id,
-      start_date: timeOffDraft.start_date,
-      end_date: timeOffDraft.end_date,
-      reason: timeOffDraft.reason || null,
-      status: 'pending',
-    })
-
-    if (error) {
+    try {
+      await adminDbMutation({
+        table: 'time_off_requests',
+        action: 'insert',
+        payload: {
+          staff_id: timeOffDraft.staff_id,
+          start_date: timeOffDraft.start_date,
+          end_date: timeOffDraft.end_date,
+          reason: timeOffDraft.reason || null,
+          status: 'pending',
+        },
+      })
+    } catch (error) {
       console.error(error)
-      toast.error('Failed to create time-off request')
+      toast.error(error instanceof Error ? error.message : 'Failed to create time-off request')
       return
     }
 
@@ -320,19 +329,18 @@ export default function StaffPage() {
   }
 
   async function handleTimeOffAction(requestId: string, status: 'approved' | 'rejected') {
-    const { data: userData } = await supabase.auth.getUser()
-
-    const { error } = await supabase
-      .from('time_off_requests')
-      .update({
+    try {
+      await adminDbMutation({
+        table: 'time_off_requests',
+        action: 'update',
+        id: requestId,
+        payload: {
         status,
-        approved_by: userData?.user?.id,
         approved_at: new Date().toISOString(),
+        },
       })
-      .eq('id', requestId)
-
-    if (error) {
-      toast.error('Failed to update request')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update request')
       return
     }
 
@@ -341,9 +349,14 @@ export default function StaffPage() {
   }
 
   async function deleteTimeOff(requestId: string) {
-    const { error } = await supabase.from('time_off_requests').delete().eq('id', requestId)
-    if (error) {
-      toast.error('Failed to delete request')
+    try {
+      await adminDbMutation({
+        table: 'time_off_requests',
+        action: 'delete',
+        id: requestId,
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete request')
       return
     }
     toast.success('Time-off request deleted')

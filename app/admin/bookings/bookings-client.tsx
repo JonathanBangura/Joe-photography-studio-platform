@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { Booking, Service, Client } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
 import { createAuditLog } from '@/lib/audit-log-client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { moveBookingWorkflowToStage } from '@/lib/business-logic-client'
 import { convertUsdToSle, formatSle, formatUsd } from '@/lib/currency'
 import { getInvoicePaymentSummary } from '@/lib/payment-summary'
@@ -551,7 +552,6 @@ const response = await fetch('/api/bookings', {
     }
 
     setIsLoading(true)
-    const supabase = createClient()
     const oldBooking = bookings.find((booking) => booking.id === editBooking.id)
 
     const totalAmountValue = Number(editBooking.total_amount || 0)
@@ -599,11 +599,16 @@ const response = await fetch('/api/bookings', {
       updated_at: new Date().toISOString(),
     }
 
-    const { error } = await supabase.from('bookings').update(payload).eq('id', editBooking.id)
-
-    if (error) {
+    try {
+      await adminDbMutation({
+        table: 'bookings',
+        action: 'update',
+        id: editBooking.id,
+        payload,
+      })
+    } catch (error) {
       console.error('Update booking error:', error)
-      toast.error(error.message || 'Failed to update booking')
+      toast.error(error instanceof Error ? error.message : 'Failed to update booking')
       setIsLoading(false)
       return
     }
@@ -643,16 +648,17 @@ const response = await fetch('/api/bookings', {
   }
 
   const handleUpdateStatus = async (bookingId: string, newStatus: string) => {
-    const supabase = createClient()
     const oldBooking = bookings.find((booking) => booking.id === bookingId)
 
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', bookingId)
-
-    if (error) {
-      toast.error('Failed to update status')
+    try {
+      await adminDbMutation({
+        table: 'bookings',
+        action: 'update',
+        id: bookingId,
+        payload: { status: newStatus },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update status')
       return
     }
 
@@ -678,12 +684,16 @@ const response = await fetch('/api/bookings', {
   }
 
   const handleDeleteBooking = async (bookingId: string) => {
-    const supabase = createClient()
     const oldBooking = bookings.find((booking) => booking.id === bookingId)
 
-    const { error } = await supabase.from('bookings').delete().eq('id', bookingId)
-    if (error) {
-      toast.error('Failed to delete booking')
+    try {
+      await adminDbMutation({
+        table: 'bookings',
+        action: 'delete',
+        id: bookingId,
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete booking')
       return
     }
 

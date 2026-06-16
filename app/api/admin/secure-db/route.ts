@@ -4,7 +4,7 @@ import { requireAdminContext } from "@/lib/admin-auth"
 const TABLES: Record<
   string,
   {
-    actions: Array<"insert" | "update" | "delete">
+    actions: Array<"insert" | "update" | "delete" | "upsert">
     defaultSelect?: string
   }
 > = {
@@ -30,12 +30,20 @@ const TABLES: Record<
     defaultSelect: "*",
   },
   invoices: {
-    actions: ["update"],
+    actions: ["insert", "update"],
     defaultSelect:
       "*, client:clients(*, profile:profiles(full_name, email)), booking:bookings(*, service:services(name)), payments(*)",
   },
+  payments: {
+    actions: ["insert"],
+    defaultSelect: "*",
+  },
   role_permissions: {
     actions: ["insert", "update"],
+    defaultSelect: "*",
+  },
+  contact_submissions: {
+    actions: ["update"],
     defaultSelect: "*",
   },
   expenses: {
@@ -54,6 +62,10 @@ const TABLES: Record<
     actions: ["insert", "update", "delete"],
     defaultSelect: "*",
   },
+  staff_schedules: {
+    actions: ["upsert"],
+    defaultSelect: "*",
+  },
   job_workflows: {
     actions: ["insert", "update", "delete"],
     defaultSelect: "*, booking:bookings(*, client:clients(*), service:services(*)), stage:workflow_stages(*)",
@@ -65,7 +77,12 @@ const TABLES: Record<
 }
 
 function cleanPayload(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  if (!value || typeof value !== "object") return {}
+  if (Array.isArray(value)) {
+    return value.filter(
+      (item) => item && typeof item === "object" && !Array.isArray(item),
+    ) as Record<string, unknown>[]
+  }
   return value as Record<string, unknown>
 }
 
@@ -76,7 +93,7 @@ export async function POST(request: Request) {
 
     const body = await request.json()
     const table = String(body.table || "")
-    const action = String(body.action || "") as "insert" | "update" | "delete"
+    const action = String(body.action || "") as "insert" | "update" | "delete" | "upsert"
     const config = TABLES[table]
 
     if (!config || !config.actions.includes(action)) {
@@ -88,30 +105,31 @@ export async function POST(request: Request) {
 
     const id = body.id ? String(body.id) : ""
     const payload = cleanPayload(body.payload)
-    if (table === "expenses" && action === "insert" && !payload.created_by) {
-      payload.created_by = context.user.id
+    const payloadRecord = Array.isArray(payload) ? {} : payload
+    if (table === "expenses" && action === "insert" && !payloadRecord.created_by) {
+      payloadRecord.created_by = context.user.id
     }
     if (
       table === "expenses" &&
       action === "update" &&
-      payload.status === "approved" &&
-      !payload.approved_by
+      payloadRecord.status === "approved" &&
+      !payloadRecord.approved_by
     ) {
-      payload.approved_by = context.user.id
+      payloadRecord.approved_by = context.user.id
     }
     if (
       table === "time_off_requests" &&
       action === "update" &&
-      !payload.approved_by
+      !payloadRecord.approved_by
     ) {
-      payload.approved_by = context.user.id
+      payloadRecord.approved_by = context.user.id
     }
     if (
       table === "job_workflow_history" &&
       action === "insert" &&
-      !payload.changed_by
+      !payloadRecord.changed_by
     ) {
-      payload.changed_by = context.user.id
+      payloadRecord.changed_by = context.user.id
     }
     const select = String(body.select || config.defaultSelect || "*")
     const now = new Date().toISOString()
@@ -120,12 +138,23 @@ export async function POST(request: Request) {
     if (action === "insert") {
       const { data: created, error } = await context.supabase
         .from(table)
-        .insert(payload)
+        .insert(Array.isArray(payload) ? payload : payloadRecord)
         .select(select)
         .single()
 
       if (error) throw error
       data = created
+    }
+
+    if (action === "upsert") {
+      const onConflict = body.onConflict ? String(body.onConflict) : undefined
+      const { data: upserted, error } = await context.supabase
+        .from(table)
+        .upsert(payload, onConflict ? { onConflict } : undefined)
+        .select(select)
+
+      if (error) throw error
+      data = upserted
     }
 
     if (action === "update") {
@@ -135,7 +164,7 @@ export async function POST(request: Request) {
 
       const { data: updated, error } = await context.supabase
         .from(table)
-        .update({ ...payload, updated_at: payload.updated_at || now })
+        .update({ ...payloadRecord, updated_at: payloadRecord.updated_at || now })
         .eq("id", id)
         .select(select)
         .single()
@@ -164,7 +193,7 @@ export async function POST(request: Request) {
       user_id: context.user.id,
       action: `admin_${action}`,
       resource_type: table,
-      resource_id: id || data?.id || null,
+      resource_id: id || (Array.isArray(data) ? null : data?.id) || null,
       new_data: action === "delete" ? null : data,
       old_data: action === "delete" ? data : null,
       ip_address: request.headers.get("x-forwarded-for"),

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { createAuditLog } from '@/lib/audit-log-client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { ensureDefaultWorkflowStages } from '@/lib/business-logic-client'
 import { toast } from 'sonner'
 import {
@@ -209,32 +210,36 @@ export default function JobTrackerPage() {
     const job = jobs.find((j) => j.id === jobId)
     if (!job) return
 
-    const { data: userData } = await supabase.auth.getUser()
-
-    // Log the stage change
-    await supabase.from('job_workflow_history').insert({
-      job_workflow_id: jobId,
-      from_stage_id: job.current_stage_id,
-      to_stage_id: stageId,
-      changed_by: userData?.user?.id,
-    })
-
     // Check if this is the final stage (Completed)
     const stage = stages.find((s) => s.id === stageId)
     const isCompleted = stage?.name.toLowerCase() === 'completed'
 
-    const { error } = await supabase
-      .from('job_workflows')
-      .update({
-        current_stage_id: stageId,
-        completed_at: isCompleted ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
+    try {
+      await adminDbMutation({
+        table: 'job_workflow_history',
+        action: 'insert',
+        payload: {
+          job_workflow_id: jobId,
+          from_stage_id: job.current_stage_id,
+          to_stage_id: stageId,
+        },
       })
-      .eq('id', jobId)
 
-    if (error) {
-      toast.error('Failed to move job')
-    } else {
+      await adminDbMutation({
+        table: 'job_workflows',
+        action: 'update',
+        id: jobId,
+        payload: {
+          current_stage_id: stageId,
+          completed_at: isCompleted ? new Date().toISOString() : null,
+        },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to move job')
+      setMoveDialogOpen(false)
+      return
+    }
+
       await createAuditLog({
         action: 'status_change',
         resource_type: 'job_workflow',
@@ -244,7 +249,6 @@ export default function JobTrackerPage() {
       })
       toast.success(`Job moved to ${stage?.name}`)
       fetchJobs()
-    }
     setMoveDialogOpen(false)
   }
 
@@ -260,40 +264,44 @@ export default function JobTrackerPage() {
       return
     }
 
-    const { error } = await supabase.from('job_workflows').insert({
-      booking_id: newJob.booking_id,
-      current_stage_id: firstStage.id,
-      due_date: newJob.due_date || null,
-      priority: newJob.priority,
-      notes: newJob.notes || null,
-    })
-
-    if (error) {
-      toast.error('Failed to create job')
-      console.error(error)
-    } else {
-      await createAuditLog({
-        action: 'create',
-        resource_type: 'job_workflow',
-        new_data: { booking_id: newJob.booking_id, stage_id: firstStage.id, priority: newJob.priority },
+    try {
+      await adminDbMutation({
+        table: 'job_workflows',
+        action: 'insert',
+        payload: {
+          booking_id: newJob.booking_id,
+          current_stage_id: firstStage.id,
+          due_date: newJob.due_date || null,
+          priority: newJob.priority,
+          notes: newJob.notes || null,
+        },
       })
-      toast.success('Job created successfully')
-      setCreateDialogOpen(false)
-      setNewJob({ booking_id: '', due_date: '', priority: 'medium', notes: '' })
-      fetchJobs()
-      fetchBookings()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create job')
+      console.error(error)
+      return
     }
+
+    await createAuditLog({
+      action: 'create',
+      resource_type: 'job_workflow',
+      new_data: { booking_id: newJob.booking_id, stage_id: firstStage.id, priority: newJob.priority },
+    })
+    toast.success('Job created successfully')
+    setCreateDialogOpen(false)
+    setNewJob({ booking_id: '', due_date: '', priority: 'medium', notes: '' })
+    fetchJobs()
+    fetchBookings()
   }
 
   const updatePriority = async (jobId: string, priority: string) => {
-    const { error } = await supabase
-      .from('job_workflows')
-      .update({ priority, updated_at: new Date().toISOString() })
-      .eq('id', jobId)
-
-    if (error) {
-      toast.error('Failed to update priority')
-    } else {
+    try {
+      await adminDbMutation({
+        table: 'job_workflows',
+        action: 'update',
+        id: jobId,
+        payload: { priority },
+      })
       await createAuditLog({
         action: 'update',
         resource_type: 'job_workflow',
@@ -302,6 +310,8 @@ export default function JobTrackerPage() {
       })
       toast.success('Priority updated')
       fetchJobs()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update priority')
     }
   }
 

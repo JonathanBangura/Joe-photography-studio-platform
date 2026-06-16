@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Plus, Edit2, Trash2, DollarSign, Clock, Camera, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { adminDbMutation } from "@/lib/admin-api-client"
 import { toast } from "sonner"
 
 interface Service {
@@ -105,7 +106,6 @@ export default function AdminServicesPage() {
     e.preventDefault()
     setIsSubmitting(true)
     
-    const supabase = createClient()
     const includesArray = formData.includes
       .split("\n")
       .map(item => item.trim())
@@ -122,30 +122,32 @@ export default function AdminServicesPage() {
 
     if (editingService) {
       // Update existing service
-      const { error } = await supabase
-        .from("services")
-        .update(serviceData)
-        .eq("id", editingService.id)
-
-      if (error) {
-        toast.error("Failed to update service")
-        console.error(error)
-      } else {
+      try {
+        await adminDbMutation({
+          table: "services",
+          action: "update",
+          id: editingService.id,
+          payload: serviceData,
+        })
         toast.success("Service updated successfully")
         fetchServices()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to update service")
+        console.error(error)
       }
     } else {
       // Create new service
-      const { error } = await supabase
-        .from("services")
-        .insert(serviceData)
-
-      if (error) {
-        toast.error("Failed to create service")
-        console.error(error)
-      } else {
+      try {
+        await adminDbMutation({
+          table: "services",
+          action: "insert",
+          payload: serviceData,
+        })
         toast.success("Service created successfully")
         fetchServices()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to create service")
+        console.error(error)
       }
     }
 
@@ -154,40 +156,37 @@ export default function AdminServicesPage() {
   }
 
   const toggleServiceStatus = async (id: string, currentStatus: boolean) => {
-    const supabase = createClient()
-    
-    const { error } = await supabase
-      .from("services")
-      .update({ is_active: !currentStatus })
-      .eq("id", id)
-
-    if (error) {
-      toast.error("Failed to update status")
-      console.error(error)
-    } else {
+    try {
+      await adminDbMutation({
+        table: "services",
+        action: "update",
+        id,
+        payload: { is_active: !currentStatus },
+      })
       setServices(services.map(s => 
         s.id === id ? { ...s, is_active: !currentStatus } : s
       ))
       toast.success(`Service ${!currentStatus ? "activated" : "deactivated"}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update status")
+      console.error(error)
     }
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this service?")) return
 
-    const supabase = createClient()
-    
-    const { error } = await supabase
-      .from("services")
-      .delete()
-      .eq("id", id)
-
-    if (error) {
-      toast.error("Failed to delete service")
-      console.error(error)
-    } else {
+    try {
+      await adminDbMutation({
+        table: "services",
+        action: "delete",
+        id,
+      })
       setServices(services.filter(s => s.id !== id))
       toast.success("Service deleted successfully")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete service")
+      console.error(error)
     }
   }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { toast } from 'sonner'
 import { createAuditLog } from '@/lib/audit-log-client'
 import { Check, Eye, Save, Shield, X } from 'lucide-react'
@@ -238,13 +239,16 @@ export default function PermissionsPage() {
         updated_at: new Date().toISOString(),
       }
 
-      const { error } = permission.id
-        ? await supabase.from('role_permissions').update(payload).eq('id', permission.id)
-        : await supabase.from('role_permissions').insert(payload)
-
-      if (error) {
+      try {
+        await adminDbMutation({
+          table: 'role_permissions',
+          action: permission.id ? 'update' : 'insert',
+          id: permission.id,
+          payload,
+        })
+      } catch (error) {
         console.error(error)
-        toast.error('Failed to save some permissions')
+        toast.error(error instanceof Error ? error.message : 'Failed to save some permissions')
         setSaving(false)
         return
       }

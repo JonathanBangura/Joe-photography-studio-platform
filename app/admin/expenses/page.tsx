@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { toast } from 'sonner'
 import {
   DollarSign,
@@ -147,70 +148,72 @@ export default function ExpensesPage() {
       return
     }
 
-    const { data: userData } = await supabase.auth.getUser()
-
-    const { error } = await supabase.from('expenses').insert({
-      category_id: newExpense.category_id || null,
-      description: newExpense.description,
-      amount: parseFloat(newExpense.amount),
-      expense_date: newExpense.expense_date,
-      vendor: newExpense.vendor || null,
-      payment_method: newExpense.payment_method || null,
-      is_reimbursable: newExpense.is_reimbursable,
-      notes: newExpense.notes || null,
-      created_by: userData?.user?.id,
-      status: 'pending',
-    })
-
-    if (error) {
-      toast.error('Failed to add expense')
-      console.error(error)
-    } else {
-      toast.success('Expense added successfully')
-      setAddDialogOpen(false)
-      setNewExpense({
-        category_id: '',
-        description: '',
-        amount: '',
-        expense_date: new Date().toISOString().split('T')[0],
-        vendor: '',
-        payment_method: '',
-        is_reimbursable: false,
-        notes: '',
+    try {
+      await adminDbMutation({
+        table: 'expenses',
+        action: 'insert',
+        payload: {
+          category_id: newExpense.category_id || null,
+          description: newExpense.description,
+          amount: parseFloat(newExpense.amount),
+          expense_date: newExpense.expense_date,
+          vendor: newExpense.vendor || null,
+          payment_method: newExpense.payment_method || null,
+          is_reimbursable: newExpense.is_reimbursable,
+          notes: newExpense.notes || null,
+          status: 'pending',
+        },
       })
-      fetchExpenses()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to add expense')
+      console.error(error)
+      return
     }
+
+    toast.success('Expense added successfully')
+    setAddDialogOpen(false)
+    setNewExpense({
+      category_id: '',
+      description: '',
+      amount: '',
+      expense_date: new Date().toISOString().split('T')[0],
+      vendor: '',
+      payment_method: '',
+      is_reimbursable: false,
+      notes: '',
+    })
+    fetchExpenses()
   }
 
   const updateExpenseStatus = async (id: string, status: string) => {
-    const { data: userData } = await supabase.auth.getUser()
-
-    const { error } = await supabase
-      .from('expenses')
-      .update({
-        status,
-        approved_by: status === 'approved' ? userData?.user?.id : null,
-        approved_at: status === 'approved' ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
+    try {
+      await adminDbMutation({
+        table: 'expenses',
+        action: 'update',
+        id,
+        payload: {
+          status,
+          approved_at: status === 'approved' ? new Date().toISOString() : null,
+        },
       })
-      .eq('id', id)
-
-    if (error) {
-      toast.error('Failed to update expense')
-    } else {
       toast.success(`Expense ${status}`)
       fetchExpenses()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update expense')
     }
   }
 
   const deleteExpense = async (id: string) => {
-    const { error } = await supabase.from('expenses').delete().eq('id', id)
-
-    if (error) {
-      toast.error('Failed to delete expense')
-    } else {
+    try {
+      await adminDbMutation({
+        table: 'expenses',
+        action: 'delete',
+        id,
+      })
       toast.success('Expense deleted')
       fetchExpenses()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete expense')
     }
   }
 

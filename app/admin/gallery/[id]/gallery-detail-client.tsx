@@ -40,12 +40,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { createClient } from "@/lib/supabase/client";
-import { createAuditLog } from "@/lib/audit-log-client";
 import {
-  buildGalleryStoragePath,
   formatFileSize,
-  GALLERY_IMAGES_BUCKET,
-  getStoragePathFromPublicUrl,
   isAllowedGalleryImage,
   isGalleryImageTooLarge,
 } from "@/lib/storage";
@@ -218,64 +214,26 @@ export function GalleryDetailClient({
 
     setIsUploading(true);
     setUploadProgress(0);
-    const supabase = createClient();
-    const uploadedPhotos: GalleryPhotoRecord[] = [];
 
     try {
-      for (let index = 0; index < selectedFiles.length; index++) {
-        const file = selectedFiles[index];
-        const storagePath = buildGalleryStoragePath(gallery.id, file.name);
+      const formData = new FormData();
+      selectedFiles.forEach((file) => formData.append("files", file));
 
-        const { error: uploadError } = await supabase.storage
-          .from(GALLERY_IMAGES_BUCKET)
-          .upload(storagePath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type,
-          });
+      const response = await fetch(`/api/admin/gallery/${gallery.id}/photos`, {
+        method: "POST",
+        body: formData,
+      });
+      const result = await response.json();
 
-        if (uploadError) {
-          throw new Error(`${file.name}: ${uploadError.message}`);
-        }
-
-        const { data: publicUrlData } = supabase.storage
-          .from(GALLERY_IMAGES_BUCKET)
-          .getPublicUrl(storagePath);
-
-        const { data: photo, error: insertError } = await supabase
-          .from("client_gallery_photos")
-          .insert({
-            gallery_id: gallery.id,
-            image_url: publicUrlData.publicUrl,
-            thumbnail_url: publicUrlData.publicUrl,
-            title: file.name,
-            is_selected: false,
-          })
-          .select("*")
-          .single();
-
-        if (insertError) {
-          await supabase.storage
-            .from(GALLERY_IMAGES_BUCKET)
-            .remove([storagePath]);
-          throw new Error(`${file.name}: ${insertError.message}`);
-        }
-
-        uploadedPhotos.push(photo as GalleryPhotoRecord);
-        setUploadProgress(
-          Math.round(((index + 1) / selectedFiles.length) * 100),
-        );
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to upload photos");
       }
 
-      await createAuditLog({
-        action: "upload_gallery_photos",
-        resource_type: "client_gallery",
-        resource_id: gallery.id,
-        new_data: { gallery_id: gallery.id, count: uploadedPhotos.length },
-      });
+      const uploadedPhotos = (result.photos || []) as GalleryPhotoRecord[];
 
       setPhotos([...uploadedPhotos, ...photos]);
       setSelectedFiles([]);
+      setUploadProgress(100);
       if (fileInputRef.current) fileInputRef.current.value = "";
       toast.success(
         `${uploadedPhotos.length} photo${uploadedPhotos.length === 1 ? "" : "s"} uploaded`,
@@ -354,25 +312,24 @@ export function GalleryDetailClient({
   };
 
   const togglePhotoSelection = async (photo: GalleryPhotoRecord) => {
-    const supabase = createClient();
     const nextValue = !photo.is_selected;
 
-    const { data, error } = await supabase
-      .from("client_gallery_photos")
-      .update({ is_selected: nextValue })
-      .eq("id", photo.id)
-      .select("*")
-      .single();
+    const response = await fetch(`/api/admin/gallery/${gallery.id}/photos`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photo_id: photo.id, is_selected: nextValue }),
+    });
+    const result = await response.json();
 
-    if (error) {
-      console.error(error);
-      toast.error("Failed to update photo selection");
+    if (!response.ok) {
+      console.error(result.error);
+      toast.error(result.error || "Failed to update photo selection");
       return;
     }
 
     setPhotos(
       photos.map((item) =>
-        item.id === photo.id ? (data as GalleryPhotoRecord) : item,
+        item.id === photo.id ? (result.photo as GalleryPhotoRecord) : item,
       ),
     );
   };
@@ -381,35 +338,19 @@ export function GalleryDetailClient({
     if (!deleteTarget) return;
 
     setIsDeleting(true);
-    const supabase = createClient();
-    const storagePath = getStoragePathFromPublicUrl(deleteTarget.image_url);
 
-    const { error: dbError } = await supabase
-      .from("client_gallery_photos")
-      .delete()
-      .eq("id", deleteTarget.id);
+    const response = await fetch(`/api/admin/gallery/${gallery.id}/photos`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photo_id: deleteTarget.id }),
+    });
+    const result = await response.json();
 
-    if (dbError) {
-      console.error(dbError);
-      toast.error("Failed to delete photo record");
+    if (!response.ok) {
+      toast.error(result.error || "Failed to delete photo");
       setIsDeleting(false);
       return;
     }
-
-    if (storagePath) {
-      const { error: storageError } = await supabase.storage
-        .from(GALLERY_IMAGES_BUCKET)
-        .remove([storagePath]);
-      if (storageError)
-        console.warn("Storage delete warning:", storageError.message);
-    }
-
-    await createAuditLog({
-      action: "delete_gallery_photo",
-      resource_type: "client_gallery_photo",
-      resource_id: deleteTarget.id,
-      old_data: deleteTarget,
-    });
 
     setPhotos(photos.filter((photo) => photo.id !== deleteTarget.id));
     setDeleteTarget(null);
