@@ -57,6 +57,12 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { createAuditLog } from "@/lib/audit-log-client";
+import { formatSle, formatUsd } from "@/lib/currency";
+import {
+  getAppliedPaymentAmount,
+  getInvoicePaymentSummary,
+  moneyNumber,
+} from "@/lib/payment-summary";
 import { toast } from "sonner";
 
 type InvoiceRecord = {
@@ -68,6 +74,13 @@ type InvoiceRecord = {
   tax_amount: number | null;
   total_amount: number;
   subtotal_amount?: number | null;
+  currency?: string | null;
+  payment_currency?: string | null;
+  exchange_rate?: number | null;
+  subtotal_amount_sle?: number | null;
+  tax_amount_sle?: number | null;
+  discount_amount_sle?: number | null;
+  total_amount_sle?: number | null;
   discount_type?: "none" | "fixed" | "percentage" | null;
   discount_value?: number | null;
   discount_amount?: number | null;
@@ -92,6 +105,7 @@ type InvoiceRecord = {
   booking?: {
     id: string;
     booking_date: string;
+    exchange_rate?: number | null;
     service?: {
       name: string;
     } | null;
@@ -99,6 +113,8 @@ type InvoiceRecord = {
   payments?: Array<{
     id?: string;
     amount: number;
+    applied_amount?: number | null;
+    tip_amount?: number | null;
     payment_method?: string | null;
     payment_channel?: string | null;
     payment_processor?: string | null;
@@ -109,6 +125,10 @@ type InvoiceRecord = {
     notes?: string | null;
     created_at?: string | null;
   }>;
+  paidSle?: number;
+  tipsSle?: number;
+  balanceSle?: number;
+  derivedStatus?: string;
 };
 
 
@@ -137,10 +157,6 @@ function calculateDiscount(subtotal: number, type: string, value: number) {
   if (type === "fixed") return Math.min(value, subtotal);
   if (type === "percentage") return Math.min((subtotal * value) / 100, subtotal);
   return 0;
-}
-
-function money(value: number | null | undefined) {
-  return `$${Number(value || 0).toLocaleString()}`;
 }
 
 export default function AdminInvoicesPage() {
@@ -207,19 +223,15 @@ export default function AdminInvoicesPage() {
     const today = new Date().toISOString().slice(0, 10);
 
     return invoices.map((invoice) => {
-      const paidAmount = (invoice.payments || []).reduce(
-        (sum, payment) => sum + Number(payment.amount || 0),
-        0,
-      );
-      const balance = Number(invoice.total_amount || 0) - paidAmount;
+      const summary = getInvoicePaymentSummary(invoice);
       const derivedStatus =
-        invoice.payment_status !== "paid" &&
+        summary.status !== "paid" &&
         invoice.due_date &&
         invoice.due_date < today
           ? "overdue"
-          : invoice.payment_status;
+          : summary.status;
 
-      return { ...invoice, paidAmount, balance, derivedStatus };
+      return { ...invoice, ...summary, derivedStatus };
     });
   }, [invoices]);
 
@@ -234,17 +246,29 @@ export default function AdminInvoicesPage() {
   });
 
   const totalRevenue = invoicesWithDerivedStatus.reduce(
-    (sum, invoice) => sum + invoice.paidAmount,
+    (sum, invoice) => sum + invoice.paidSle,
     0,
   );
   const pendingAmount = invoicesWithDerivedStatus.reduce(
-    (sum, invoice) => sum + Math.max(invoice.balance, 0),
+    (sum, invoice) => sum + invoice.balanceSle,
     0,
   );
   const totalDiscounts = invoicesWithDerivedStatus.reduce(
-    (sum, invoice) => sum + Number(invoice.discount_amount || 0),
+    (sum, invoice) =>
+      sum +
+      moneyNumber(
+        invoice.discount_amount_sle ||
+          Number(invoice.discount_amount || 0) * invoice.exchangeRate,
+      ),
     0,
   );
+  const totalTips = invoicesWithDerivedStatus.reduce(
+    (sum, invoice) => sum + invoice.tipsSle,
+    0,
+  );
+  const selectedSummary = selectedInvoice
+    ? getInvoicePaymentSummary(selectedInvoice)
+    : null;
 
   function getClientName(invoice: InvoiceRecord) {
     return (
@@ -352,16 +376,25 @@ export default function AdminInvoicesPage() {
   }
 
   function downloadInvoice(
-    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+    invoice: InvoiceRecord,
   ) {
-    const paid = Number(invoice.paidAmount || 0);
-    const balance = Math.max(Number(invoice.balance || 0), 0);
+    const summary = getInvoicePaymentSummary(invoice);
     const service = invoice.booking?.service?.name || "Photography Service";
     const bookingDate = invoice.booking?.booking_date
       ? new Date(invoice.booking.booking_date).toLocaleDateString()
       : "-";
     const subtotal = Number(invoice.subtotal_amount ?? invoice.amount ?? 0);
     const discountAmount = Number(invoice.discount_amount || 0);
+    const subtotalSle = moneyNumber(
+      invoice.subtotal_amount_sle || subtotal * summary.exchangeRate,
+    );
+    const discountSle = moneyNumber(
+      invoice.discount_amount_sle || discountAmount * summary.exchangeRate,
+    );
+    const taxSle = moneyNumber(
+      invoice.tax_amount_sle ||
+        Number(invoice.tax_amount || 0) * summary.exchangeRate,
+    );
 
     const lines = [
       "JOE PHOTOGRAPHY STUDIO",
@@ -381,17 +414,21 @@ export default function AdminInvoicesPage() {
       `Booking Date: ${bookingDate}`,
       "",
       "PAYMENT SUMMARY",
-      `Subtotal: $${subtotal.toLocaleString()}`,
+      `Subtotal: ${formatUsd(subtotal)} / ${formatSle(subtotalSle)}`,
       ...(discountAmount > 0
         ? [
-            `Discount: -$${discountAmount.toLocaleString()}`,
+            `Discount: -${formatUsd(discountAmount)} / -${formatSle(discountSle)}`,
             `Discount Reason: ${invoice.discount_reason || "N/A"}`,
           ]
         : []),
-      `Tax: $${Number(invoice.tax_amount || 0).toLocaleString()}`,
-      `Total: $${Number(invoice.total_amount || 0).toLocaleString()}`,
-      `Paid: $${paid.toLocaleString()}`,
-      `Balance: $${balance.toLocaleString()}`,
+      `Tax: ${formatUsd(Number(invoice.tax_amount || 0))} / ${formatSle(taxSle)}`,
+      `Total: ${formatUsd(Number(invoice.total_amount || 0))} / ${formatSle(summary.totalSle)}`,
+      `Rate Used: 1 USD = SLE ${summary.exchangeRate.toLocaleString()}`,
+      `Paid: ${formatSle(summary.paidSle)}`,
+      `Balance: ${formatSle(summary.balanceSle)}`,
+      ...(summary.tipsSle > 0
+        ? [`Tips: ${formatSle(summary.tipsSle)}`]
+        : []),
       "",
       "PAYMENT HISTORY",
       ...((invoice.payments || []).length > 0
@@ -401,7 +438,9 @@ export default function AdminInvoicesPage() {
               : "N/A";
             const channel = getPaymentDisplayName(payment);
             const reference = payment.transaction_id || payment.customer_reference || "No reference";
-            return `${paymentDate} - ${channel} - ${reference} - $${Number(payment.amount || 0).toLocaleString()}`;
+            const applied = getAppliedPaymentAmount(payment);
+            const tip = moneyNumber(payment.tip_amount);
+            return `${paymentDate} - ${channel} - ${reference} - ${formatSle(applied)}${tip > 0 ? ` + ${formatSle(tip)} tip` : ""}`;
           })
         : ["No payments recorded"]),
       "",
@@ -462,14 +501,22 @@ export default function AdminInvoicesPage() {
   }
 
   function buildInvoiceHtml(
-    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+    invoice: InvoiceRecord,
   ) {
-    const paid = Number(invoice.paidAmount || 0);
-    const balance = Math.max(Number(invoice.balance || 0), 0);
+    const summary = getInvoicePaymentSummary(invoice);
     const subtotal = Number(invoice.subtotal_amount ?? invoice.amount ?? 0);
     const discount = Number(invoice.discount_amount || 0);
     const tax = Number(invoice.tax_amount || 0);
     const total = Number(invoice.total_amount || 0);
+    const subtotalSle = moneyNumber(
+      invoice.subtotal_amount_sle || subtotal * summary.exchangeRate,
+    );
+    const discountSle = moneyNumber(
+      invoice.discount_amount_sle || discount * summary.exchangeRate,
+    );
+    const taxSle = moneyNumber(
+      invoice.tax_amount_sle || tax * summary.exchangeRate,
+    );
     const service = invoice.booking?.service?.name || "Photography Service";
     const bookingDate = invoice.booking?.booking_date
       ? new Date(invoice.booking.booking_date).toLocaleDateString()
@@ -499,7 +546,10 @@ export default function AdminInvoicesPage() {
                     <strong>${escapeHtml(channel)}</strong>
                     <p class="muted">${escapeHtml(paymentDate)} • ${escapeHtml(reference)}</p>
                   </div>
-                  <strong>${money(Number(payment.amount || 0))}</strong>
+                  <strong>
+                    ${formatSle(getAppliedPaymentAmount(payment))}
+                    ${moneyNumber(payment.tip_amount) > 0 ? `<span class="muted"> + ${formatSle(moneyNumber(payment.tip_amount))} tip</span>` : ""}
+                  </strong>
                 </div>
               `;
             })
@@ -635,10 +685,10 @@ export default function AdminInvoicesPage() {
             </section>
 
             <section class="summary">
-              <div class="row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
+              <div class="row"><span>Subtotal</span><strong>${formatUsd(subtotal)} / ${formatSle(subtotalSle)}</strong></div>
               ${
                 discount > 0
-                  ? `<div class="row discount"><span>Discount</span><strong>-${money(discount)}</strong></div>`
+                  ? `<div class="row discount"><span>Discount</span><strong>-${formatUsd(discount)} / -${formatSle(discountSle)}</strong></div>`
                   : ""
               }
               ${
@@ -646,10 +696,12 @@ export default function AdminInvoicesPage() {
                   ? `<div class="reason">Reason: ${escapeHtml(invoice.discount_reason)}</div>`
                   : ""
               }
-              <div class="row"><span>Tax</span><strong>${money(tax)}</strong></div>
-              <div class="row total"><span>Total</span><strong>${money(total)}</strong></div>
-              <div class="row"><span>Paid</span><strong>${money(paid)}</strong></div>
-              <div class="row"><span>Balance</span><strong>${money(balance)}</strong></div>
+              <div class="row"><span>Tax</span><strong>${formatUsd(tax)} / ${formatSle(taxSle)}</strong></div>
+              <div class="row total"><span>Total</span><strong>${formatUsd(total)} / ${formatSle(summary.totalSle)}</strong></div>
+              <div class="row"><span>Exchange rate</span><strong>1 USD = SLE ${summary.exchangeRate.toLocaleString()}</strong></div>
+              <div class="row"><span>Paid</span><strong>${formatSle(summary.paidSle)}</strong></div>
+              <div class="row"><span>Balance</span><strong>${formatSle(summary.balanceSle)}</strong></div>
+              ${summary.tipsSle > 0 ? `<div class="row discount"><span>Tips</span><strong>${formatSle(summary.tipsSle)}</strong></div>` : ""}
             </section>
 
             <section class="summary" style="margin-top: 18px;">
@@ -665,7 +717,7 @@ export default function AdminInvoicesPage() {
   }
 
   function printInvoice(
-    invoice: InvoiceRecord & { paidAmount?: number; balance?: number },
+    invoice: InvoiceRecord,
   ) {
     const printWindow = window.open("", "_blank", "width=900,height=700");
 
@@ -684,12 +736,11 @@ export default function AdminInvoicesPage() {
     };
   }
 
-  function openPaymentDialog(invoice: InvoiceRecord & { balance?: number }) {
+  function openPaymentDialog(invoice: InvoiceRecord) {
+    const summary = getInvoicePaymentSummary(invoice);
     setSelectedInvoice(invoice);
     setPaymentForm({
-      amount: String(
-        Math.max(Number(invoice.balance || invoice.total_amount || 0), 0),
-      ),
+      amount: String(summary.balanceSle),
       payment_method: "Cash",
       payment_channel: "Cash",
       payment_processor: "Manual",
@@ -777,12 +828,13 @@ export default function AdminInvoicesPage() {
         calculateDiscount(subtotal, discountForm.type, discountValue).toFixed(2),
       );
       const finalTotal = Number((subtotal - discountAmount).toFixed(2));
-      const paidAmount = (selectedInvoice.payments || []).reduce(
-        (sum, payment) => sum + Number(payment.amount || 0),
-        0,
-      );
+      const exchangeRate = moneyNumber(selectedInvoice.exchange_rate || 24) || 24;
+      const subtotalSle = moneyNumber(subtotal * exchangeRate);
+      const discountAmountSle = moneyNumber(discountAmount * exchangeRate);
+      const finalTotalSle = moneyNumber(finalTotal * exchangeRate);
+      const paidAmount = getInvoicePaymentSummary(selectedInvoice).paidSle;
       const paymentStatus =
-        paidAmount >= finalTotal ? "paid" : paidAmount > 0 ? "partial" : "pending";
+        paidAmount >= finalTotalSle ? "paid" : paidAmount > 0 ? "partial" : "pending";
 
       const { error } = await supabase
         .from("invoices")
@@ -791,9 +843,12 @@ export default function AdminInvoicesPage() {
           discount_type: discountForm.type,
           discount_value: discountValue,
           discount_amount: discountAmount,
+          discount_amount_sle: discountAmountSle,
           discount_reason: discountForm.reason || null,
           amount: subtotal,
+          subtotal_amount_sle: subtotalSle,
           total_amount: finalTotal,
+          total_amount_sle: finalTotalSle,
           payment_status: paymentStatus,
           paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
           updated_at: new Date().toISOString(),
@@ -811,8 +866,10 @@ export default function AdminInvoicesPage() {
           discount_type: discountForm.type,
           discount_value: discountValue,
           discount_amount: discountAmount,
+          discount_amount_sle: discountAmountSle,
           discount_reason: discountForm.reason || null,
           total_amount: finalTotal,
+          total_amount_sle: finalTotalSle,
         },
       });
 
@@ -835,12 +892,11 @@ export default function AdminInvoicesPage() {
     try {
       const subtotal =
         Number(selectedInvoice.subtotal_amount) || Number(selectedInvoice.amount || 0);
-      const paidAmount = (selectedInvoice.payments || []).reduce(
-        (sum, payment) => sum + Number(payment.amount || 0),
-        0,
-      );
+      const exchangeRate = moneyNumber(selectedInvoice.exchange_rate || 24) || 24;
+      const subtotalSle = moneyNumber(subtotal * exchangeRate);
+      const paidAmount = getInvoicePaymentSummary(selectedInvoice).paidSle;
       const paymentStatus =
-        paidAmount >= subtotal ? "paid" : paidAmount > 0 ? "partial" : "pending";
+        paidAmount >= subtotalSle ? "paid" : paidAmount > 0 ? "partial" : "pending";
 
       const { error } = await supabase
         .from("invoices")
@@ -848,9 +904,12 @@ export default function AdminInvoicesPage() {
           discount_type: "none",
           discount_value: 0,
           discount_amount: 0,
+          discount_amount_sle: 0,
           discount_reason: null,
           amount: subtotal,
+          subtotal_amount_sle: subtotalSle,
           total_amount: subtotal,
+          total_amount_sle: subtotalSle,
           payment_status: paymentStatus,
           paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
           updated_at: new Date().toISOString(),
@@ -891,7 +950,7 @@ export default function AdminInvoicesPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">
@@ -900,9 +959,7 @@ export default function AdminInvoicesPage() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              ${totalRevenue.toLocaleString()}
-            </div>
+            <div className="text-2xl font-bold">{formatSle(totalRevenue)}</div>
             <p className="text-xs text-muted-foreground">
               from recorded payments
             </p>
@@ -914,9 +971,7 @@ export default function AdminInvoicesPage() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              ${pendingAmount.toLocaleString()}
-            </div>
+            <div className="text-2xl font-bold">{formatSle(pendingAmount)}</div>
             <p className="text-xs text-muted-foreground">remaining balances</p>
           </CardContent>
         </Card>
@@ -926,10 +981,18 @@ export default function AdminInvoicesPage() {
             <Percent className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              ${totalDiscounts.toLocaleString()}
-            </div>
+            <div className="text-2xl font-bold">{formatSle(totalDiscounts)}</div>
             <p className="text-xs text-muted-foreground">applied discounts</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Tips</CardTitle>
+            <CreditCard className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatSle(totalTips)}</div>
+            <p className="text-xs text-muted-foreground">customer overpayments</p>
           </CardContent>
         </Card>
         <Card>
@@ -1015,21 +1078,26 @@ export default function AdminInvoicesPage() {
                       : "-"}
                   </TableCell>
                   <TableCell className="font-semibold">
-                    {money(invoice.total_amount)}
+                    <div>{formatSle(invoice.totalSle)}</div>
+                    <div className="text-xs font-normal text-muted-foreground">
+                      {formatUsd(invoice.total_amount)}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {Number(invoice.discount_amount || 0) > 0 ? (
                       <span className="text-green-600">
-                        -{money(invoice.discount_amount)}
+                        -{formatSle(
+                          invoice.discount_amount_sle ||
+                            Number(invoice.discount_amount || 0) *
+                              invoice.exchangeRate,
+                        )}
                       </span>
                     ) : (
                       <span className="text-muted-foreground">-</span>
                     )}
                   </TableCell>
-                  <TableCell>${invoice.paidAmount.toLocaleString()}</TableCell>
-                  <TableCell>
-                    ${Math.max(invoice.balance, 0).toLocaleString()}
-                  </TableCell>
+                  <TableCell>{formatSle(invoice.paidSle)}</TableCell>
+                  <TableCell>{formatSle(invoice.balanceSle)}</TableCell>
                   <TableCell>
                     <Badge
                       className={statusStyles[invoice.derivedStatus]}
@@ -1177,7 +1245,18 @@ export default function AdminInvoicesPage() {
                 <div className="flex items-center justify-between gap-6">
                   <span className="min-w-0">Subtotal</span>
                   <span className="shrink-0 text-right">
-                    {money(selectedInvoice.subtotal_amount ?? selectedInvoice.amount)}
+                    {formatUsd(
+                      selectedInvoice.subtotal_amount ?? selectedInvoice.amount,
+                    )}
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {formatSle(
+                        selectedInvoice.subtotal_amount_sle ||
+                          Number(
+                            selectedInvoice.subtotal_amount ??
+                              selectedInvoice.amount,
+                          ) * (selectedSummary?.exchangeRate || 24),
+                      )}
+                    </span>
                   </span>
                 </div>
                 {Number(selectedInvoice.discount_amount || 0) > 0 && (
@@ -1190,7 +1269,16 @@ export default function AdminInvoicesPage() {
                           ? ` (${selectedInvoice.discount_value}%)`
                           : ""}
                       </span>
-                      <span className="shrink-0 text-right">-{money(selectedInvoice.discount_amount)}</span>
+                      <span className="shrink-0 text-right">
+                        -{formatUsd(selectedInvoice.discount_amount || 0)}
+                        <span className="block text-xs font-normal">
+                          -{formatSle(
+                            selectedInvoice.discount_amount_sle ||
+                              Number(selectedInvoice.discount_amount || 0) *
+                                (selectedSummary?.exchangeRate || 24),
+                          )}
+                        </span>
+                      </span>
                     </div>
                     {selectedInvoice.discount_reason && (
                       <div className="rounded-md bg-green-500/10 p-2 text-xs text-green-700">
@@ -1201,22 +1289,50 @@ export default function AdminInvoicesPage() {
                 )}
                 <div className="flex items-center justify-between gap-6">
                   <span className="min-w-0">Tax</span>
-                  <span className="shrink-0 text-right">{money(selectedInvoice.tax_amount)}</span>
+                  <span className="shrink-0 text-right">
+                    {formatUsd(selectedInvoice.tax_amount || 0)} /{" "}
+                    {formatSle(
+                      selectedInvoice.tax_amount_sle ||
+                        Number(selectedInvoice.tax_amount || 0) *
+                          (selectedSummary?.exchangeRate || 24),
+                    )}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between gap-6 font-bold text-lg border-t pt-3">
                   <span className="min-w-0">Total</span>
-                  <span className="shrink-0 text-right">{money(selectedInvoice.total_amount)}</span>
+                  <span className="shrink-0 text-right">
+                    {formatSle(selectedSummary?.totalSle || 0)}
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {formatUsd(selectedInvoice.total_amount)}
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-6 text-sm text-muted-foreground">
+                  <span className="min-w-0">Exchange Rate</span>
+                  <span className="shrink-0 text-right">
+                    1 USD = SLE {selectedSummary?.exchangeRate.toLocaleString()}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between gap-6">
                   <span className="min-w-0">Paid</span>
-                  <span className="shrink-0 text-right">{money((selectedInvoice as any).paidAmount || 0)}</span>
+                  <span className="shrink-0 text-right">
+                    {formatSle(selectedSummary?.paidSle || 0)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between gap-6">
                   <span className="min-w-0">Balance</span>
                   <span className="shrink-0 text-right">
-                    {money(Math.max(Number((selectedInvoice as any).balance || 0), 0))}
+                    {formatSle(selectedSummary?.balanceSle || 0)}
                   </span>
                 </div>
+                {(selectedSummary?.tipsSle || 0) > 0 && (
+                  <div className="flex items-center justify-between gap-6 text-green-600">
+                    <span className="min-w-0">Tips</span>
+                    <span className="shrink-0 text-right">
+                      {formatSle(selectedSummary?.tipsSle || 0)}
+                    </span>
+                  </div>
+                )}
               </div>
 
 
@@ -1339,7 +1455,14 @@ export default function AdminInvoicesPage() {
                           )}
                         </div>
                         <div className="shrink-0 text-right">
-                          <p className="font-semibold">{money(payment.amount)}</p>
+                          <p className="font-semibold">
+                            {formatSle(getAppliedPaymentAmount(payment))}
+                          </p>
+                          {moneyNumber(payment.tip_amount) > 0 && (
+                            <p className="text-xs text-green-600">
+                              + {formatSle(moneyNumber(payment.tip_amount))} tip
+                            </p>
+                          )}
                           <p className="text-xs capitalize text-muted-foreground">
                             {payment.payment_status || "completed"}
                           </p>
@@ -1377,7 +1500,7 @@ export default function AdminInvoicesPage() {
               <Printer className="h-4 w-4 mr-2" />
               Print
             </Button>
-            {selectedInvoice && selectedInvoice.payment_status !== "paid" && (
+            {selectedInvoice && selectedSummary?.status !== "paid" && (
               <Button
                 onClick={() => {
                   setViewOpen(false);
@@ -1402,7 +1525,7 @@ export default function AdminInvoicesPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Amount</Label>
+              <Label>Amount (SLE)</Label>
               <Input
                 type="number"
                 min="0"
@@ -1412,6 +1535,12 @@ export default function AdminInvoicesPage() {
                   setPaymentForm({ ...paymentForm, amount: e.target.value })
                 }
               />
+              {selectedInvoice && (
+                <p className="text-xs text-muted-foreground">
+                  Current balance: {formatSle(selectedSummary?.balanceSle || 0)}.
+                  Any amount above the balance will be recorded as a tip.
+                </p>
+              )}
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
@@ -1554,15 +1683,24 @@ export default function AdminInvoicesPage() {
               <div className="rounded-lg border p-3 text-sm">
                 <div className="flex justify-between">
                   <span>Current Subtotal</span>
-                  <strong>{money(selectedInvoice.subtotal_amount ?? selectedInvoice.amount)}</strong>
+                  <strong>
+                    {formatUsd(
+                      selectedInvoice.subtotal_amount ?? selectedInvoice.amount,
+                    )}
+                  </strong>
                 </div>
                 <div className="flex justify-between">
                   <span>Current Discount</span>
-                  <strong>-{money(selectedInvoice.discount_amount || 0)}</strong>
+                  <strong>
+                    -{formatUsd(selectedInvoice.discount_amount || 0)}
+                  </strong>
                 </div>
                 <div className="flex justify-between">
                   <span>Current Total</span>
-                  <strong>{money(selectedInvoice.total_amount)}</strong>
+                  <strong>
+                    {formatUsd(selectedInvoice.total_amount)} /{" "}
+                    {formatSle(selectedSummary?.totalSle || 0)}
+                  </strong>
                 </div>
               </div>
             )}
@@ -1587,7 +1725,7 @@ export default function AdminInvoicesPage() {
 
             <div className="space-y-2">
               <Label>
-                Discount Value {discountForm.type === "percentage" ? "(%)" : "($)"}
+                Discount Value {discountForm.type === "percentage" ? "(%)" : "(USD)"}
               </Label>
               <Input
                 type="number"

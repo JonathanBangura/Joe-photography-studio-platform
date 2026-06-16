@@ -146,6 +146,7 @@ export async function POST(request: Request) {
         amount: order.amount,
         applied_amount: appliedAmount,
         tip_amount: tipAmount,
+        currency: 'SLE',
         payment_method: order.payment_method || 'vult',
         payment_channel:
           order.payment_method === 'card'
@@ -194,6 +195,10 @@ export async function POST(request: Request) {
     )
 
     const depositPaidSle = money(Math.min(paidAfter, depositRequiredSle || paidAfter))
+    const bookingExchangeRate = money(
+      booking?.exchange_rate || order.invoice?.exchange_rate || 24,
+    ) || 24
+    const depositPaidUsd = money(depositPaidSle / bookingExchangeRate)
     const depositStatus = depositRequiredSle <= 0
       ? 'paid'
       : depositPaidSle >= depositRequiredSle
@@ -208,7 +213,8 @@ export async function POST(request: Request) {
         .from('bookings')
         .update({
           status: depositStatus === 'paid' ? 'confirmed' : booking?.status || 'pending',
-          deposit_paid_amount: depositPaidSle,
+          deposit_paid_amount: depositPaidUsd,
+          deposit_paid_amount_sle: depositPaidSle,
           deposit_status: depositStatus,
           deposit_payment_method: order.payment_method || 'vult',
           updated_at: new Date().toISOString(),

@@ -401,6 +401,7 @@ export async function POST(request: NextRequest) {
           amount: depositPaidAmountSle,
           applied_amount: depositPaidAmountSle,
           tip_amount: 0,
+          currency: 'SLE',
           payment_method: body.deposit_payment_method || 'cash',
           transaction_id: body.transaction_id || null,
           notes: `Deposit payment for booking ${reference}`,

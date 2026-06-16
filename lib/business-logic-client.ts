@@ -14,31 +14,12 @@ const DEFAULT_WORKFLOW_STAGES = [
 ]
 
 export async function ensureDefaultWorkflowStages() {
-  const supabase = createClient()
-  const { data: existingStages, error } = await supabase
-    .from('workflow_stages')
-    .select('id, name, sort_order')
-
-  if (error) throw error
-
-  const existingNames = new Set((existingStages || []).map((stage) => stage.name.toLowerCase()))
-  const missingStages = DEFAULT_WORKFLOW_STAGES.filter(
-    (stage) => !existingNames.has(stage.name.toLowerCase())
-  )
-
-  if (missingStages.length > 0) {
-    const { error: insertError } = await supabase.from('workflow_stages').insert(missingStages)
-    if (insertError) throw insertError
-  }
-
-  const { data: stages, error: reloadError } = await supabase
-    .from('workflow_stages')
-    .select('*')
-    .eq('is_active', true)
-    .order('sort_order')
-
-  if (reloadError) throw reloadError
-  return stages || []
+  const response = await fetch('/api/admin/workflow/stages', {
+    cache: 'no-store',
+  })
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.error || 'Failed to load workflow stages')
+  return result.data || []
 }
 
 export async function getWorkflowStageByName(stageName: string) {
@@ -150,57 +131,19 @@ export async function moveBookingWorkflowToStage(
   stageName: string,
   notes?: string
 ) {
-  const supabase = createClient()
-  const targetStage = await getWorkflowStageByName(stageName)
-  if (!targetStage) throw new Error(`Workflow stage not found: ${stageName}`)
-
-  const { data: workflow, error: workflowError } = await supabase
-    .from('job_workflows')
-    .select('*')
-    .eq('booking_id', bookingId)
-    .maybeSingle()
-
-  if (workflowError) throw workflowError
-  if (!workflow) return null
-
-  if (workflow.current_stage_id === targetStage.id) return workflow
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  await supabase.from('job_workflow_history').insert({
-    job_workflow_id: workflow.id,
-    from_stage_id: workflow.current_stage_id,
-    to_stage_id: targetStage.id,
-    changed_by: user?.id || null,
-    notes: notes || null,
+  const response = await fetch('/api/admin/workflow/move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      booking_id: bookingId,
+      stage_name: stageName,
+      notes: notes || null,
+    }),
   })
 
-  const isClosed = targetStage.name.toLowerCase() === 'job closed'
-
-  const { data, error } = await supabase
-    .from('job_workflows')
-    .update({
-      current_stage_id: targetStage.id,
-      completed_at: isClosed ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', workflow.id)
-    .select('*')
-    .single()
-
-  if (error) throw error
-
-  await createAuditLog({
-    action: 'status_change',
-    resource_type: 'job_workflow',
-    resource_id: workflow.id,
-    old_data: { current_stage_id: workflow.current_stage_id },
-    new_data: { current_stage_id: targetStage.id, stage_name: targetStage.name },
-  })
-
-  return data
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.error || 'Failed to move workflow')
+  return result.data
 }
 
 export async function recordPaymentAndSyncInvoice(params: {

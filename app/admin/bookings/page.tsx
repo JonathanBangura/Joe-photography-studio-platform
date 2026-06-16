@@ -6,7 +6,7 @@ export default async function BookingsPage() {
 
   const { data: bookings } = await supabase
     .from('bookings')
-    .select('*, service:services(*), client:clients(*, profile:profiles(*)), staff:profiles(*), resource:studio_resources(*)')
+    .select('*, service:services(*), client:clients(*, profile:profiles(*)), staff:profiles(*), resource:studio_resources(*), invoice:invoices(*, payments(*))')
     .order('booking_date', { ascending: false })
 
   const { data: services } = await supabase
