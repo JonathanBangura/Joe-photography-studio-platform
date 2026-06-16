@@ -15,6 +15,8 @@ import type { Booking, Service, Client } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
 import { createAuditLog } from '@/lib/audit-log-client'
 import { moveBookingWorkflowToStage } from '@/lib/business-logic-client'
+import { convertUsdToSle, formatSle, formatUsd } from '@/lib/currency'
+import { getInvoicePaymentSummary } from '@/lib/payment-summary'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -45,6 +47,12 @@ interface ExtendedBooking extends Booking {
   deposit_percentage?: number | null
   deposit_required_amount?: number | null
   deposit_paid_amount?: number | null
+  currency?: string | null
+  payment_currency?: string | null
+  exchange_rate?: number | null
+  total_amount_sle?: number | null
+  deposit_required_amount_sle?: number | null
+  deposit_paid_amount_sle?: number | null
   deposit_payment_method?: string | null
   deposit_status?: 'required' | 'partial' | 'paid' | 'waived'
   service?: Service
@@ -57,6 +65,31 @@ interface ExtendedBooking extends Booking {
   locks_indoor_studio?: boolean | null
   availability_override?: boolean | null
   override_reason?: string | null
+  invoice?: {
+    id: string
+    total_amount?: number | null
+    total_amount_sle?: number | null
+    exchange_rate?: number | null
+    payment_status?: string | null
+    payments?: Array<{
+      amount?: number | null
+      applied_amount?: number | null
+      tip_amount?: number | null
+      payment_status?: string | null
+    }>
+  } | Array<{
+    id: string
+    total_amount?: number | null
+    total_amount_sle?: number | null
+    exchange_rate?: number | null
+    payment_status?: string | null
+    payments?: Array<{
+      amount?: number | null
+      applied_amount?: number | null
+      tip_amount?: number | null
+      payment_status?: string | null
+    }>
+  }> | null
 }
 
 
@@ -111,6 +144,42 @@ function addMinutes(time: string, minutes: number) {
   return date.toTimeString().slice(0, 5)
 }
 
+function getBookingInvoice(booking?: ExtendedBooking | null) {
+  if (!booking?.invoice) return null
+  return Array.isArray(booking.invoice) ? booking.invoice[0] || null : booking.invoice
+}
+
+function getBookingRate(booking: ExtendedBooking) {
+  return Number(booking.exchange_rate || getBookingInvoice(booking)?.exchange_rate || 24)
+}
+
+function getBookingTotalSle(booking: ExtendedBooking) {
+  return Number(
+    booking.total_amount_sle ||
+      Number(booking.total_amount || 0) * getBookingRate(booking),
+  )
+}
+
+function getBookingDepositRequiredSle(booking: ExtendedBooking) {
+  return Number(
+    booking.deposit_required_amount_sle ||
+      Number(booking.deposit_required_amount || 0) * getBookingRate(booking),
+  )
+}
+
+function getBookingDepositPaidSle(booking: ExtendedBooking) {
+  const invoice = getBookingInvoice(booking)
+  if (invoice) {
+    const summary = getInvoicePaymentSummary(invoice)
+    return Math.min(summary.paidSle, getBookingDepositRequiredSle(booking))
+  }
+
+  return Number(
+    booking.deposit_paid_amount_sle ||
+      Number(booking.deposit_paid_amount || 0) * getBookingRate(booking),
+  )
+}
+
 export function BookingsClient({ initialBookings, services, clients, staff, resources }: BookingsClientProps) {
   const router = useRouter()
   const [bookings, setBookings] = useState(initialBookings)
@@ -118,6 +187,7 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [currencyRate, setCurrencyRate] = useState(24)
   const [clientMode, setClientMode] = useState<'existing' | 'new'>('new')
   const [selectedBooking, setSelectedBooking] = useState<ExtendedBooking | null>(null)
   const [isViewOpen, setIsViewOpen] = useState(false)
@@ -148,6 +218,16 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false)
   const [paymentLinkSaving, setPaymentLinkSaving] = useState(false)
   const [paymentLinkExpiry, setPaymentLinkExpiry] = useState('')
+
+  useEffect(() => {
+    fetch('/api/business-settings')
+      .then((response) => response.json())
+      .then((result) => {
+        const rate = Number(result?.settings?.usd_to_sle_rate || 24)
+        if (Number.isFinite(rate) && rate > 0) setCurrencyRate(rate)
+      })
+      .catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     if (selectedBooking?.id && isViewOpen) {
@@ -249,6 +329,8 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   const selectedService = services.find((service) => service.id === newBooking.service_id)
   const totalAmount = Number(selectedService?.base_price || 0)
   const depositRequired = Number(((totalAmount * Number(newBooking.deposit_percentage || 50)) / 100).toFixed(2))
+  const totalAmountSle = convertUsdToSle(totalAmount, currencyRate)
+  const depositRequiredSle = convertUsdToSle(depositRequired, currencyRate)
 
   const resetForm = () => {
     setClientMode('new')
@@ -397,7 +479,9 @@ const response = await fetch('/api/bookings', {
           location: newBooking.location || 'Studio',
           notes: newBooking.notes,
           deposit_percentage: Number(newBooking.deposit_percentage),
-          deposit_paid_amount: Number(newBooking.deposit_paid_amount || 0),
+          deposit_paid_amount:
+            Number(newBooking.deposit_paid_amount || 0) / currencyRate,
+          deposit_paid_amount_sle: Number(newBooking.deposit_paid_amount || 0),
           deposit_payment_method: newBooking.deposit_payment_method,
           transaction_id: newBooking.transaction_id || null,
         }),
@@ -476,6 +560,7 @@ const response = await fetch('/api/bookings', {
       ? Number(editBooking.deposit_required_amount)
       : Number(((totalAmountValue * depositPercentageValue) / 100).toFixed(2))
     const depositPaidValue = Number(editBooking.deposit_paid_amount || 0)
+    const exchangeRateValue = Number(oldBooking?.exchange_rate || currencyRate || 24)
     const depositStatusValue = editBooking.deposit_status || (
       depositPaidValue <= 0 ? 'required' : depositPaidValue >= depositRequiredValue ? 'paid' : 'partial'
     )
@@ -492,9 +577,20 @@ const response = await fetch('/api/bookings', {
       locks_indoor_studio: editBooking.booking_environment === 'indoor' && editBooking.privacy_level === 'private',
       location: editBooking.location || null,
       total_amount: totalAmountValue,
+      total_amount_sle: convertUsdToSle(totalAmountValue, exchangeRateValue),
+      exchange_rate: exchangeRateValue,
+      payment_currency: 'SLE',
       deposit_percentage: depositPercentageValue,
       deposit_required_amount: depositRequiredValue,
+      deposit_required_amount_sle: convertUsdToSle(
+        depositRequiredValue,
+        exchangeRateValue,
+      ),
       deposit_paid_amount: depositPaidValue,
+      deposit_paid_amount_sle: convertUsdToSle(
+        depositPaidValue,
+        exchangeRateValue,
+      ),
       deposit_payment_method: editBooking.deposit_payment_method || null,
       deposit_status: depositStatusValue,
       notes: editBooking.notes || null,
@@ -651,7 +747,7 @@ const response = await fetch('/api/bookings', {
                   <Label>Package *</Label>
                   <Select value={newBooking.service_id} onValueChange={(value) => setNewBooking({ ...newBooking, service_id: value })}>
                     <SelectTrigger><SelectValue placeholder="Select package" /></SelectTrigger>
-                    <SelectContent>{services.map((service) => <SelectItem key={service.id} value={service.id}>{service.name} - ${service.base_price}</SelectItem>)}</SelectContent>
+                    <SelectContent>{services.map((service) => <SelectItem key={service.id} value={service.id}>{service.name} - {formatUsd(Number(service.base_price || 0))} / {formatSle(convertUsdToSle(Number(service.base_price || 0), currencyRate))}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
@@ -757,8 +853,11 @@ const response = await fetch('/api/bookings', {
                       <SelectContent><SelectItem value="30">30%</SelectItem><SelectItem value="50">50%</SelectItem></SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2"><Label>Required</Label><Input value={`$${depositRequired.toLocaleString()}`} readOnly /></div>
-                  <div className="space-y-2"><Label>Paid Now</Label><Input type="number" min="0" value={newBooking.deposit_paid_amount} onChange={(e) => setNewBooking({ ...newBooking, deposit_paid_amount: e.target.value })} /></div>
+                  <div className="space-y-2">
+                    <Label>Required</Label>
+                    <Input value={`${formatSle(depositRequiredSle)} (${formatUsd(depositRequired)})`} readOnly />
+                  </div>
+                  <div className="space-y-2"><Label>Paid Now (SLE)</Label><Input type="number" min="0" value={newBooking.deposit_paid_amount} onChange={(e) => setNewBooking({ ...newBooking, deposit_paid_amount: e.target.value })} /></div>
                   <div className="space-y-2">
                     <Label>Method</Label>
                     <Select value={newBooking.deposit_payment_method} onValueChange={(value) => setNewBooking({ ...newBooking, deposit_payment_method: value })}>
@@ -773,6 +872,9 @@ const response = await fetch('/api/bookings', {
                     </Select>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Package total: {formatSle(totalAmountSle)} ({formatUsd(totalAmount)}) at 1 USD = SLE {currencyRate.toLocaleString()}.
+                </p>
                 <div className="space-y-2"><Label>Transaction Reference</Label><Input placeholder="Receipt/reference number" value={newBooking.transaction_id} onChange={(e) => setNewBooking({ ...newBooking, transaction_id: e.target.value })} /></div>
               </div>
 
@@ -829,7 +931,7 @@ const response = await fetch('/api/bookings', {
                       <TableCell>{booking.service?.name || 'N/A'}</TableCell>
                       <TableCell><div><p className="font-medium">{new Date(booking.booking_date).toLocaleDateString()}</p><p className="text-xs text-muted-foreground">{booking.start_time?.slice(0, 5)} • {booking.staff?.full_name || 'Unassigned'}</p></div></TableCell>
                       <TableCell><span className="capitalize text-xs px-2 py-1 rounded bg-muted">{(booking.booking_source || 'online').replace('_', ' ')}</span></TableCell>
-                      <TableCell><div className="space-y-1"><span className={`px-2 py-1 rounded text-xs font-medium capitalize ${depositColors[booking.deposit_status || 'required']}`}>{booking.deposit_status || 'required'}</span><p className="text-xs text-muted-foreground">${Number(booking.deposit_paid_amount || 0).toLocaleString()} / ${Number(booking.deposit_required_amount || 0).toLocaleString()}</p></div></TableCell>
+                      <TableCell><div className="space-y-1"><span className={`px-2 py-1 rounded text-xs font-medium capitalize ${depositColors[booking.deposit_status || 'required']}`}>{booking.deposit_status || 'required'}</span><p className="text-xs text-muted-foreground">{formatSle(getBookingDepositPaidSle(booking))} / {formatSle(getBookingDepositRequiredSle(booking))}</p></div></TableCell>
                       <TableCell><span className={`px-2 py-1 rounded text-xs font-medium capitalize ${statusColors[booking.status] || statusColors.pending}`}>{booking.status.replace('_', ' ')}</span></TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -870,7 +972,12 @@ const response = await fetch('/api/bookings', {
                 <div className="rounded-lg border p-4 space-y-2">
                   <h3 className="font-semibold">Package</h3>
                   <p className="font-medium">{selectedBooking.service?.name || 'N/A'}</p>
-                  <p className="text-sm text-muted-foreground">Total: ${Number(selectedBooking.total_amount || 0).toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Total: {formatSle(getBookingTotalSle(selectedBooking))}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatUsd(Number(selectedBooking.total_amount || 0))} at 1 USD = SLE {getBookingRate(selectedBooking).toLocaleString()}
+                  </p>
                   <p className="text-sm text-muted-foreground">Status: {selectedBooking.status?.replace('_', ' ')}</p>
                 </div>
               </div>
@@ -894,11 +1001,39 @@ const response = await fetch('/api/bookings', {
               <div className="rounded-lg border p-4 space-y-2">
                 <h3 className="font-semibold">Deposit</h3>
                 <div className="grid sm:grid-cols-4 gap-3 text-sm">
-                  <div><span className="text-muted-foreground">Required</span><p className="font-medium">${Number(selectedBooking.deposit_required_amount || 0).toLocaleString()}</p></div>
-                  <div><span className="text-muted-foreground">Paid</span><p className="font-medium">${Number(selectedBooking.deposit_paid_amount || 0).toLocaleString()}</p></div>
+                  <div><span className="text-muted-foreground">Required</span><p className="font-medium">{formatSle(getBookingDepositRequiredSle(selectedBooking))}</p></div>
+                  <div><span className="text-muted-foreground">Paid</span><p className="font-medium">{formatSle(getBookingDepositPaidSle(selectedBooking))}</p></div>
                   <div><span className="text-muted-foreground">Method</span><p className="font-medium capitalize">{selectedBooking.deposit_payment_method?.replace('_', ' ') || 'N/A'}</p></div>
                   <div><span className="text-muted-foreground">Status</span><p className="font-medium capitalize">{selectedBooking.deposit_status || 'required'}</p></div>
                 </div>
+                {getBookingInvoice(selectedBooking) && (
+                  <div className="grid gap-3 border-t pt-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <span className="text-muted-foreground">Invoice Paid</span>
+                      <p className="font-medium">
+                        {formatSle(
+                          getInvoicePaymentSummary(getBookingInvoice(selectedBooking)!).paidSle,
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Balance</span>
+                      <p className="font-medium">
+                        {formatSle(
+                          getInvoicePaymentSummary(getBookingInvoice(selectedBooking)!).balanceSle,
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Tips</span>
+                      <p className="font-medium">
+                        {formatSle(
+                          getInvoicePaymentSummary(getBookingInvoice(selectedBooking)!).tipsSle,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
 
@@ -1079,13 +1214,19 @@ const response = await fetch('/api/bookings', {
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">
-              <div className="space-y-2"><Label>Total Amount</Label><Input type="number" value={editBooking.total_amount} onChange={(e) => setEditBooking({ ...editBooking, total_amount: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Total Amount (USD)</Label><Input type="number" value={editBooking.total_amount} onChange={(e) => setEditBooking({ ...editBooking, total_amount: e.target.value })} /></div>
               <div className="space-y-2"><Label>Deposit %</Label><Input type="number" value={editBooking.deposit_percentage} onChange={(e) => setEditBooking({ ...editBooking, deposit_percentage: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Deposit Required</Label><Input type="number" value={editBooking.deposit_required_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_required_amount: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Deposit Required (USD)</Label><Input type="number" value={editBooking.deposit_required_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_required_amount: e.target.value })} /></div>
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">
-              <div className="space-y-2"><Label>Deposit Paid</Label><Input type="number" value={editBooking.deposit_paid_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_paid_amount: e.target.value })} /></div>
+              <div className="space-y-2">
+                <Label>Deposit Paid (USD)</Label>
+                <Input type="number" value={editBooking.deposit_paid_amount} readOnly />
+                <p className="text-xs text-muted-foreground">
+                  Record new payments from the invoice to keep the ledger synchronized.
+                </p>
+              </div>
               <div className="space-y-2">
                 <Label>Deposit Status</Label>
                 <Select value={editBooking.deposit_status} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_status: value })}>

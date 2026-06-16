@@ -1,15 +1,24 @@
 import { NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { createClient } from "@/lib/supabase/server"
 
 export async function GET() {
   try {
-    const supabase = createAdminClient()
+    const authSupabase = await createClient()
+    const {
+      data: { user },
+    } = await authSupabase.auth.getUser()
 
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const supabase = createAdminClient()
     const { data, error } = await supabase
       .from("invoices")
       .select(`
         *,
-        client:clients(*, profile:profiles(full_name,email)),
+        client:clients(*, profile:profiles(full_name, email)),
         booking:bookings(*, service:services(name)),
         payments(*)
       `)
@@ -17,19 +26,15 @@ export async function GET() {
 
     if (error) throw error
 
-    return NextResponse.json({
-      success: true,
-      data,
-    })
-  } catch (error: any) {
+    return NextResponse.json({ data: data || [] })
+  } catch (error) {
+    console.error("Admin invoices load error:", error)
     return NextResponse.json(
       {
-        success: false,
-        error: error.message,
+        error:
+          error instanceof Error ? error.message : "Failed to load invoices",
       },
-      {
-        status: 500,
-      },
+      { status: 500 },
     )
   }
 }
