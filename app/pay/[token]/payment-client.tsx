@@ -410,8 +410,8 @@ export function PaymentClient({ token }: { token: string }) {
                   <img src="/payment-assets/vult-logo.png" alt="Vult" className="max-h-10 max-w-full object-contain" />
                 </div>
                 <div>
-                  <h2 className="text-3xl font-bold">Pay with (Vult)</h2>
-                  <p className="text-muted-foreground">Scan or open with Vult.</p>
+                  <h2 className="text-3xl font-bold">Pay with Vult</h2>
+                  <p className="text-muted-foreground">Scan to open with Vult.</p>
                 </div>
               </div>
 
