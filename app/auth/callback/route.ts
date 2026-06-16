@@ -26,6 +26,7 @@ export async function GET(request: Request) {
           id: data.user.id,
           email: data.user.email!,
           full_name: data.user.user_metadata?.full_name || null,
+          phone: data.user.user_metadata?.phone || null,
           role: 'client',
           studio_role: 'viewer',
           is_active: true,
@@ -35,6 +36,10 @@ export async function GET(request: Request) {
         if (data.user.user_metadata?.role === 'client' || !data.user.user_metadata?.role) {
           await supabase.from('clients').insert({
             profile_id: data.user.id,
+            full_name: data.user.user_metadata?.full_name || data.user.email || null,
+            email: data.user.email || null,
+            phone: data.user.user_metadata?.phone || null,
+            preferred_contact: data.user.user_metadata?.phone ? 'phone' : 'email',
           })
         }
       }

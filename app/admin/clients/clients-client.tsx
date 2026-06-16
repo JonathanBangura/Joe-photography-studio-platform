@@ -50,6 +50,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { createClient } from "@/lib/supabase/client";
 import { createAuditLog } from "@/lib/audit-log-client";
+import { adminDbMutation } from "@/lib/admin-api-client";
 import { toast } from "sonner";
 import type { Client, Profile } from "@/lib/types";
 
@@ -165,27 +166,29 @@ export function ClientsClient({ initialClients }: ClientsClientProps) {
     }
 
     setSaving(true);
-    const { data, error } = await supabase
-      .from("clients")
-      .insert({
-        full_name: form.full_name,
-        email: form.email || null,
-        phone: form.phone || null,
-        address: form.address || null,
-        city: form.city || null,
-        preferred_contact: form.preferred_contact || null,
-        notes: form.notes || null,
+    let data: ExtendedClient
+    try {
+      data = await adminDbMutation<ExtendedClient>({
+        table: "clients",
+        action: "insert",
+        payload: {
+          full_name: form.full_name,
+          email: form.email || null,
+          phone: form.phone || null,
+          address: form.address || null,
+          city: form.city || null,
+          preferred_contact: form.preferred_contact || null,
+          notes: form.notes || null,
+        },
       })
-      .select("*, profile:profiles(*)")
-      .single();
-
-    setSaving(false);
-
-    if (error) {
+    } catch (error) {
+      setSaving(false);
       console.error(error);
-      toast.error(error.message || "Failed to add client");
+      toast.error(error instanceof Error ? error.message : "Failed to add client");
       return;
     }
+
+    setSaving(false);
 
     setClients([data as ExtendedClient, ...clients]);
     setAddOpen(false);
@@ -206,29 +209,30 @@ export function ClientsClient({ initialClients }: ClientsClientProps) {
     }
 
     setSaving(true);
-    const { data, error } = await supabase
-      .from("clients")
-      .update({
-        full_name: form.full_name,
-        email: form.email || null,
-        phone: form.phone || null,
-        address: form.address || null,
-        city: form.city || null,
-        preferred_contact: form.preferred_contact || null,
-        notes: form.notes || null,
-        updated_at: new Date().toISOString(),
+    let data: ExtendedClient
+    try {
+      data = await adminDbMutation<ExtendedClient>({
+        table: "clients",
+        action: "update",
+        id: selectedClient.id,
+        payload: {
+          full_name: form.full_name,
+          email: form.email || null,
+          phone: form.phone || null,
+          address: form.address || null,
+          city: form.city || null,
+          preferred_contact: form.preferred_contact || null,
+          notes: form.notes || null,
+        },
       })
-      .eq("id", selectedClient.id)
-      .select("*, profile:profiles(*)")
-      .single();
-
-    setSaving(false);
-
-    if (error) {
+    } catch (error) {
+      setSaving(false);
       console.error(error);
-      toast.error(error.message || "Failed to update client");
+      toast.error(error instanceof Error ? error.message : "Failed to update client");
       return;
     }
+
+    setSaving(false);
 
     setClients(
       clients.map((client) =>
@@ -255,12 +259,14 @@ export function ClientsClient({ initialClients }: ClientsClientProps) {
     )
       return;
 
-    const { error } = await supabase
-      .from("clients")
-      .delete()
-      .eq("id", client.id);
-    if (error) {
-      toast.error(error.message || "Unable to delete client");
+    try {
+      await adminDbMutation({
+        table: "clients",
+        action: "delete",
+        id: client.id,
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete client");
       return;
     }
 

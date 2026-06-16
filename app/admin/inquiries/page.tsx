@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { Mail, Phone, Calendar, Search, Eye, Reply, RefreshCw, Inbox } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -80,15 +81,18 @@ export default function AdminInquiriesPage() {
     setReplyMessage('')
 
     if (!inquiry.is_read) {
-      const { error } = await supabase
-        .from('contact_submissions')
-        .update({ is_read: true })
-        .eq('id', inquiry.id)
-
-      if (!error) {
+      try {
+        await adminDbMutation({
+          table: 'contact_submissions',
+          action: 'update',
+          id: inquiry.id,
+          payload: { is_read: true },
+        })
         setInquiries((items) =>
           items.map((item) => (item.id === inquiry.id ? { ...item, is_read: true } : item)),
         )
+      } catch (error) {
+        console.error(error)
       }
     }
   }

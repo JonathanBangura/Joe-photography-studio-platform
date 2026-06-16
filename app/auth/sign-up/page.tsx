@@ -14,6 +14,7 @@ export default function SignUpPage() {
   const router = useRouter()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -44,6 +45,7 @@ export default function SignUpPage() {
           `${window.location.origin}/auth/callback`,
         data: {
           full_name: fullName,
+          phone,
           role: 'client',
           studio_role: 'viewer',
         },
@@ -122,6 +124,19 @@ export default function SignUpPage() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                required
+                className="h-12"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                type="tel"
+                placeholder="+232 79 000000"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
                 required
                 className="h-12"
               />

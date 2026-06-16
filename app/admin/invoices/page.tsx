@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { createAuditLog } from "@/lib/audit-log-client";
+import { adminDbMutation } from "@/lib/admin-api-client";
 import { formatSle, formatUsd } from "@/lib/currency";
 import {
   getAppliedPaymentAmount,
@@ -836,9 +837,11 @@ export default function AdminInvoicesPage() {
       const paymentStatus =
         paidAmount >= finalTotalSle ? "paid" : paidAmount > 0 ? "partial" : "pending";
 
-      const { error } = await supabase
-        .from("invoices")
-        .update({
+      await adminDbMutation({
+        table: "invoices",
+        action: "update",
+        id: selectedInvoice.id,
+        payload: {
           subtotal_amount: subtotal,
           discount_type: discountForm.type,
           discount_value: discountValue,
@@ -851,11 +854,8 @@ export default function AdminInvoicesPage() {
           total_amount_sle: finalTotalSle,
           payment_status: paymentStatus,
           paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", selectedInvoice.id);
-
-      if (error) throw error;
+        },
+      });
 
       await createAuditLog({
         action: "apply_discount",
@@ -898,9 +898,11 @@ export default function AdminInvoicesPage() {
       const paymentStatus =
         paidAmount >= subtotalSle ? "paid" : paidAmount > 0 ? "partial" : "pending";
 
-      const { error } = await supabase
-        .from("invoices")
-        .update({
+      await adminDbMutation({
+        table: "invoices",
+        action: "update",
+        id: selectedInvoice.id,
+        payload: {
           discount_type: "none",
           discount_value: 0,
           discount_amount: 0,
@@ -912,11 +914,8 @@ export default function AdminInvoicesPage() {
           total_amount_sle: subtotalSle,
           payment_status: paymentStatus,
           paid_date: paymentStatus === "paid" ? new Date().toISOString().slice(0, 10) : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", selectedInvoice.id);
-
-      if (error) throw error;
+        },
+      });
 
       await createAuditLog({
         action: "clear_discount",

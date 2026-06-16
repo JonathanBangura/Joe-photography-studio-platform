@@ -21,7 +21,7 @@ interface AuditLogPayload {
 
 export async function createAuditLog(payload: AuditLogPayload) {
   try {
-    const response = await fetch('/api/admin/audit-log', {
+    const response = await fetch('/api/admin/audit-logs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

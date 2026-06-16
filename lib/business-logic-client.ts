@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/client'
 import { createAuditLog } from '@/lib/audit-log-client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 
 const DEFAULT_WORKFLOW_STAGES = [
   { name: 'Booking Received', description: 'Booking has been created and is awaiting confirmation.', color: '#F59E0B', sort_order: 1 },
@@ -53,9 +54,10 @@ export async function createInvoiceForBooking(params: {
   const dueDate = new Date()
   dueDate.setDate(dueDate.getDate() + 7)
 
-  const { data, error } = await supabase
-    .from('invoices')
-    .insert({
+  const data = await adminDbMutation<Record<string, any>>({
+    table: 'invoices',
+    action: 'insert',
+    payload: {
       booking_id: params.bookingId,
       client_id: params.clientId,
       invoice_number: generateInvoiceNumber(),
@@ -65,11 +67,9 @@ export async function createInvoiceForBooking(params: {
       payment_status: 'pending',
       due_date: dueDate.toISOString().slice(0, 10),
       notes: params.notes || null,
-    })
-    .select('*')
-    .single()
-
-  if (error) throw error
+    },
+    select: '*',
+  })
 
   await createAuditLog({
     action: 'create',
@@ -102,19 +102,18 @@ export async function createWorkflowForBooking(params: {
 
   const dueDate = params.bookingDate || null
 
-  const { data, error } = await supabase
-    .from('job_workflows')
-    .insert({
+  const data = await adminDbMutation<Record<string, any>>({
+    table: 'job_workflows',
+    action: 'insert',
+    payload: {
       booking_id: params.bookingId,
       current_stage_id: firstStage.id,
       due_date: dueDate,
       priority: params.priority || 'medium',
       notes: params.notes || null,
-    })
-    .select('*')
-    .single()
-
-  if (error) throw error
+    },
+    select: '*',
+  })
 
   await createAuditLog({
     action: 'create',
@@ -163,19 +162,18 @@ export async function recordPaymentAndSyncInvoice(params: {
 
   if (invoiceError) throw invoiceError
 
-  const { data: payment, error: paymentError } = await supabase
-    .from('payments')
-    .insert({
+  const payment = await adminDbMutation<Record<string, any>>({
+    table: 'payments',
+    action: 'insert',
+    payload: {
       invoice_id: params.invoiceId,
       amount: params.amount,
       payment_method: params.paymentMethod,
       transaction_id: params.transactionId || null,
       notes: params.notes || null,
-    })
-    .select('*')
-    .single()
-
-  if (paymentError) throw paymentError
+    },
+    select: '*',
+  })
 
   const { data: payments, error: paymentsError } = await supabase
     .from('payments')
@@ -188,16 +186,15 @@ export async function recordPaymentAndSyncInvoice(params: {
   const totalAmount = Number(invoice.total_amount || 0)
   const nextStatus = paidAmount >= totalAmount ? 'paid' : paidAmount > 0 ? 'partial' : 'pending'
 
-  const { error: updateError } = await supabase
-    .from('invoices')
-    .update({
+  await adminDbMutation({
+    table: 'invoices',
+    action: 'update',
+    id: params.invoiceId,
+    payload: {
       payment_status: nextStatus,
       paid_date: nextStatus === 'paid' ? new Date().toISOString().slice(0, 10) : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', params.invoiceId)
-
-  if (updateError) throw updateError
+    },
+  })
 
   if (invoice.booking_id && paidAmount > 0) {
     await moveBookingWorkflowToStage(invoice.booking_id, 'Deposit Paid', 'Payment recorded')

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { adminDbMutation } from '@/lib/admin-api-client'
 import { toast } from 'sonner'
 import {
   Package,
@@ -202,25 +203,31 @@ export default function EquipmentPage() {
       return
     }
 
-    const { error } = await supabase.from('equipment').insert({
-      name: newEquipment.name,
-      category_id: newEquipment.category_id || null,
-      description: newEquipment.description || null,
-      serial_number: newEquipment.serial_number || null,
-      purchase_date: newEquipment.purchase_date || null,
-      purchase_price: newEquipment.purchase_price ? parseFloat(newEquipment.purchase_price) : null,
-      current_value: newEquipment.current_value ? parseFloat(newEquipment.current_value) : null,
-      condition: newEquipment.condition,
-      status: newEquipment.status,
-      location: newEquipment.location || null,
-      warranty_expiry: newEquipment.warranty_expiry || null,
-      notes: newEquipment.notes || null,
-    })
-
-    if (error) {
-      toast.error('Failed to add equipment')
+    try {
+      await adminDbMutation({
+        table: 'equipment',
+        action: 'insert',
+        payload: {
+          name: newEquipment.name,
+          category_id: newEquipment.category_id || null,
+          description: newEquipment.description || null,
+          serial_number: newEquipment.serial_number || null,
+          purchase_date: newEquipment.purchase_date || null,
+          purchase_price: newEquipment.purchase_price ? parseFloat(newEquipment.purchase_price) : null,
+          current_value: newEquipment.current_value ? parseFloat(newEquipment.current_value) : null,
+          condition: newEquipment.condition,
+          status: newEquipment.status,
+          location: newEquipment.location || null,
+          warranty_expiry: newEquipment.warranty_expiry || null,
+          notes: newEquipment.notes || null,
+        },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to add equipment')
       console.error(error)
-    } else {
+      return
+    }
+
       toast.success('Equipment added successfully')
       setAddDialogOpen(false)
       setNewEquipment({
@@ -238,7 +245,6 @@ export default function EquipmentPage() {
         notes: '',
       })
       fetchEquipment()
-    }
   }
 
   const handleAddMaintenance = async () => {
@@ -247,31 +253,37 @@ export default function EquipmentPage() {
       return
     }
 
-    const { error } = await supabase.from('equipment_maintenance').insert({
-      equipment_id: selectedEquipment.id,
-      maintenance_type: newMaintenance.maintenance_type,
-      description: newMaintenance.description || null,
-      cost: newMaintenance.cost ? parseFloat(newMaintenance.cost) : null,
-      performed_by: newMaintenance.performed_by || null,
-      maintenance_date: newMaintenance.maintenance_date,
-      next_due_date: newMaintenance.next_due_date || null,
-    })
+    try {
+      await adminDbMutation({
+        table: 'equipment_maintenance',
+        action: 'insert',
+        payload: {
+          equipment_id: selectedEquipment.id,
+          maintenance_type: newMaintenance.maintenance_type,
+          description: newMaintenance.description || null,
+          cost: newMaintenance.cost ? parseFloat(newMaintenance.cost) : null,
+          performed_by: newMaintenance.performed_by || null,
+          maintenance_date: newMaintenance.maintenance_date,
+          next_due_date: newMaintenance.next_due_date || null,
+        },
+      })
 
-    if (error) {
-      toast.error('Failed to log maintenance')
-      console.error(error)
-    } else {
-      // Update equipment maintenance dates
-      await supabase
-        .from('equipment')
-        .update({
+      await adminDbMutation({
+        table: 'equipment',
+        action: 'update',
+        id: selectedEquipment.id,
+        payload: {
           last_maintenance_date: newMaintenance.maintenance_date,
           next_maintenance_date: newMaintenance.next_due_date || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', selectedEquipment.id)
+        },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to log maintenance')
+      console.error(error)
+      return
+    }
 
-      toast.success('Maintenance logged')
+    toast.success('Maintenance logged')
       setMaintenanceDialogOpen(false)
       setNewMaintenance({
         maintenance_type: '',
@@ -281,32 +293,35 @@ export default function EquipmentPage() {
         maintenance_date: new Date().toISOString().split('T')[0],
         next_due_date: '',
       })
-      fetchEquipment()
-    }
+    fetchEquipment()
   }
 
   const updateEquipmentStatus = async (id: string, status: string) => {
-    const { error } = await supabase
-      .from('equipment')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', id)
-
-    if (error) {
-      toast.error('Failed to update status')
-    } else {
+    try {
+      await adminDbMutation({
+        table: 'equipment',
+        action: 'update',
+        id,
+        payload: { status },
+      })
       toast.success('Status updated')
       fetchEquipment()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update status')
     }
   }
 
   const deleteEquipment = async (id: string) => {
-    const { error } = await supabase.from('equipment').delete().eq('id', id)
-
-    if (error) {
-      toast.error('Failed to delete equipment')
-    } else {
+    try {
+      await adminDbMutation({
+        table: 'equipment',
+        action: 'delete',
+        id,
+      })
       toast.success('Equipment deleted')
       fetchEquipment()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete equipment')
     }
   }
 

@@ -1,11 +1,12 @@
-type AdminDbAction = "insert" | "update" | "delete"
+type AdminDbAction = "insert" | "update" | "delete" | "upsert"
 
 export async function adminDbMutation<T = unknown>(params: {
   table: string
   action: AdminDbAction
-  payload?: Record<string, unknown>
+  payload?: Record<string, unknown> | Record<string, unknown>[]
   id?: string
   select?: string
+  onConflict?: string
 }) {
   const response = await fetch("/api/admin/secure-db", {
     method: "POST",
