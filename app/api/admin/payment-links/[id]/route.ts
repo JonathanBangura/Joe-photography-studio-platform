@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminContext } from '@/lib/admin-auth'
 
 type Params = {
   params: Promise<{ id: string }>
@@ -17,9 +17,12 @@ function generateToken() {
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+
     const { id } = await params
     const body = await request.json()
-    const supabase = createAdminClient()
+    const supabase = context.supabase
 
     const { data: oldData } = await supabase
       .from('customer_payment_links')
@@ -62,6 +65,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (error) throw error
 
     await supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: body.regenerate ? 'regenerate_payment_link' : 'update_payment_link',
       resource_type: 'payment_link',
       resource_id: id,

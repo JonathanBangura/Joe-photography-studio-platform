@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { createClient } from "@/lib/supabase/server"
+import { requireAdminContext } from "@/lib/admin-auth"
 import {
   getInvoicePaymentSummary,
   getInvoiceTotalSle,
@@ -52,14 +52,8 @@ async function moveWorkflowToDepositPaid(
 
 export async function POST(request: Request) {
   try {
-    const authSupabase = await createClient()
-    const {
-      data: { user },
-    } = await authSupabase.auth.getUser()
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
 
     const body = await request.json()
     const invoiceId = String(body.invoice_id || "")
@@ -72,7 +66,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const supabase = createAdminClient()
+    const supabase = context.supabase
     const { data: invoice, error: invoiceError } = await supabase
       .from("invoices")
       .select("*, booking:bookings(*)")
@@ -138,14 +132,14 @@ export async function POST(request: Request) {
         customer_reference:
           body.customer_reference || invoice.invoice_number || null,
         payment_status: "completed",
-        recorded_by: user.id,
+        recorded_by: context.user.id,
         notes: body.notes || null,
         metadata: {
           source: "admin_invoice_payment",
           currency: "SLE",
           invoice_number: invoice.invoice_number,
           balance_before_payment: before.balanceSle,
-          recorded_by_email: user.email,
+          recorded_by_email: context.user.email,
         },
       })
       .select("*")
@@ -217,7 +211,7 @@ export async function POST(request: Request) {
     }
 
     await supabase.from("audit_logs").insert({
-      user_id: user.id,
+      user_id: context.user.id,
       action: "record_payment",
       resource_type: "invoice",
       resource_id: invoiceId,

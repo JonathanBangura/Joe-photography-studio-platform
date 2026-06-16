@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminContext } from '@/lib/admin-auth'
 
 function getLegacyRole(studioRole: string) {
   if (studioRole === 'super_admin' || studioRole === 'studio_admin') return 'admin'
@@ -13,8 +13,11 @@ function makePassword() {
 
 export async function POST(request: NextRequest) {
   try {
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+
     const body = await request.json()
-    const supabase = createAdminClient()
+    const supabase = context.supabase
 
     const email = String(body.email || '').trim().toLowerCase()
     const fullName = String(body.full_name || '').trim()
@@ -67,7 +70,7 @@ export async function POST(request: NextRequest) {
     if (profileError) throw profileError
 
     await supabase.from('audit_logs').insert({
-      user_id: body.created_by || null,
+      user_id: context.user.id,
       action: 'create_user',
       resource_type: 'profiles',
       resource_id: user.id,

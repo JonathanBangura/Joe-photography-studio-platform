@@ -1,5 +1,3 @@
-import { createClient } from '@/lib/supabase/client'
-
 export type AuditAction =
   | 'login'
   | 'logout'
@@ -22,23 +20,18 @@ interface AuditLogPayload {
 }
 
 export async function createAuditLog(payload: AuditLogPayload) {
-  const supabase = createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  try {
+    const response = await fetch('/api/admin/audit-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
 
-  const { error } = await supabase.from('audit_logs').insert({
-    user_id: user?.id ?? null,
-    action: payload.action,
-    resource_type: payload.resource_type,
-    resource_id: payload.resource_id ?? null,
-    old_data: payload.old_data ?? null,
-    new_data: payload.new_data ?? null,
-    ip_address: null,
-    user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-  })
-
-  if (error) {
+    if (!response.ok) {
+      const result = await response.json().catch(() => null)
+      console.error('Failed to create audit log:', result?.error || response.statusText)
+    }
+  } catch (error) {
     console.error('Failed to create audit log:', error)
   }
 }

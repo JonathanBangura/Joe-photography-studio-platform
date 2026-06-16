@@ -1,25 +1,31 @@
-import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { NextResponse } from "next/server"
+import { requireAdminContext } from "@/lib/admin-auth"
 
-export async function GET() {
+export async function POST(request: Request) {
   try {
-    const supabase = createAdminClient()
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
 
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(200)
+    const body = await request.json()
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 })
-    }
+    const { error } = await context.supabase.from("audit_logs").insert({
+      user_id: context.user.id,
+      action: body.action,
+      resource_type: body.resource_type,
+      resource_id: body.resource_id ?? null,
+      old_data: body.old_data ?? null,
+      new_data: body.new_data ?? null,
+      ip_address: request.headers.get("x-forwarded-for"),
+      user_agent: request.headers.get("user-agent"),
+    })
 
-    return NextResponse.json({ logs: data || [] })
+    if (error) throw error
+
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Audit logs API error:', error)
+    console.error("Admin audit log error:", error)
     return NextResponse.json(
-      { error: 'Unable to load audit logs.' },
+      { error: error instanceof Error ? error.message : "Failed to write audit log" },
       { status: 500 },
     )
   }

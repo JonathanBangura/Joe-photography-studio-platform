@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminContext } from '@/lib/admin-auth'
 
 function buildPaymentUrl(request: NextRequest, token: string) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
@@ -50,7 +51,9 @@ async function getPaymentLinkWithUrl(request: NextRequest, link: any) {
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createAdminClient()
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+    const supabase = context.supabase
     const bookingId = request.nextUrl.searchParams.get('booking_id')
     const invoiceId = request.nextUrl.searchParams.get('invoice_id')
 
@@ -81,8 +84,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+
     const body = await request.json()
-    const supabase = createAdminClient()
+    const supabase = context.supabase
 
     const bookingId = body.booking_id ? String(body.booking_id) : null
     const invoiceId = body.invoice_id ? String(body.invoice_id) : null
@@ -159,6 +165,7 @@ export async function POST(request: NextRequest) {
     }
 
     await supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: existing && regenerate ? 'regenerate_payment_link' : existing ? 'update_payment_link' : 'create_payment_link',
       resource_type: 'payment_link',
       resource_id: data.id,

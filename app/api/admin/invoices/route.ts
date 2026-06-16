@@ -1,20 +1,12 @@
 import { NextResponse } from "next/server"
-import { createAdminClient } from "@/lib/supabase/admin"
-import { createClient } from "@/lib/supabase/server"
+import { requireAdminContext } from "@/lib/admin-auth"
 
 export async function GET() {
   try {
-    const authSupabase = await createClient()
-    const {
-      data: { user },
-    } = await authSupabase.auth.getUser()
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
 
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const supabase = createAdminClient()
-    const { data, error } = await supabase
+    const { data, error } = await context.supabase
       .from("invoices")
       .select(`
         *,
