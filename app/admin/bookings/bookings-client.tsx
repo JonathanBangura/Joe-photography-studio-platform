@@ -359,8 +359,8 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   }
 
   const handleCreateBooking = async () => {
-    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time) {
-      toast.error('Please select service, date and time')
+    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time || !newBooking.resource_id) {
+      toast.error('Please select service, date, time and resource')
       return
     }
     if (clientMode === 'existing' && !newBooking.existing_client_id) {
@@ -807,16 +807,10 @@ const response = await fetch('/api/bookings', {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Resource</Label>
-                    <Select
-                      value={newBooking.resource_id || 'none'}
-                      onValueChange={(value) =>
-                        setNewBooking({ ...newBooking, resource_id: value === 'none' ? '' : value })
-                      }
-                    >
+                    <Label>Resource *</Label>
+                    <Select value={newBooking.resource_id} onValueChange={(value) => setNewBooking({ ...newBooking, resource_id: value })}>
                       <SelectTrigger><SelectValue placeholder="Select resource" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">No specific resource</SelectItem>
                         {resources
                           .filter((resource) => {
                             if (newBooking.booking_environment === 'indoor') return resource.type === 'indoor' || resource.type === 'desk'
@@ -836,7 +830,7 @@ const response = await fetch('/api/bookings', {
                     onChange={(event) => setNewBooking({ ...newBooking, availability_override: event.target.checked })}
                     className="mt-1"
                   />
-                  <span>Allow admin override if the selected slot or resource is already booked.</span>
+                  <span>Allow admin override if the selected slot/resource is already booked.</span>
                 </label>
                 {newBooking.availability_override && (
                   <div className="space-y-2">
