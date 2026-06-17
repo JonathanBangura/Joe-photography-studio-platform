@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminContext } from '@/lib/admin-auth'
 
 type RouteContext = {
   params: Promise<{ id: string }>
@@ -9,7 +9,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   try {
     const { id } = await params
     const body = await request.json()
-    const supabase = createAdminClient()
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+    const supabase = context.supabase
 
     const { data: oldTestimonial } = await supabase
       .from('testimonials')
@@ -72,7 +74,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 export async function DELETE(request: Request, { params }: RouteContext) {
   try {
     const { id } = await params
-    const supabase = createAdminClient()
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+    const supabase = context.supabase
 
     const { data: oldTestimonial } = await supabase
       .from('testimonials')

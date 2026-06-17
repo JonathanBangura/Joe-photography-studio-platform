@@ -1,6 +1,29 @@
 import { NextResponse } from "next/server"
 import { requireAdminContext } from "@/lib/admin-auth"
 
+export async function GET() {
+  try {
+    const context = await requireAdminContext()
+    if ("error" in context) return context.error
+
+    const { data, error } = await context.supabase
+      .from("audit_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(300)
+
+    if (error) throw error
+
+    return NextResponse.json({ logs: data || [] })
+  } catch (error) {
+    console.error("Admin audit logs fetch error:", error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to load audit logs" },
+      { status: 500 },
+    )
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const context = await requireAdminContext()

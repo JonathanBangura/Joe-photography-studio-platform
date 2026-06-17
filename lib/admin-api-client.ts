@@ -14,7 +14,7 @@ export async function adminDbMutation<T = unknown>(params: {
     body: JSON.stringify(params),
   })
 
-  const result = await response.json()
+  const result = await response.json().catch(() => ({ error: response.statusText }))
 
   if (!response.ok) {
     throw new Error(result.error || "Admin action failed")

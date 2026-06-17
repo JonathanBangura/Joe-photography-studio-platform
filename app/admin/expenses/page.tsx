@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { adminDbMutation } from '@/lib/admin-api-client'
+import { formatSle, formatUsd } from '@/lib/currency'
 import { toast } from 'sonner'
 import {
   DollarSign,
@@ -86,6 +87,10 @@ const statusColors: Record<string, string> = {
   approved: 'bg-green-500/10 text-green-500 border-green-500/20',
   rejected: 'bg-red-500/10 text-red-500 border-red-500/20',
   reimbursed: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+}
+
+function expenseMoney(amountSle: number) {
+  return `${formatSle(amountSle)} / ${formatUsd(Number(amountSle || 0) / 24)}`
 }
 
 export default function ExpensesPage() {
@@ -270,7 +275,8 @@ export default function ExpensesPage() {
                 <DollarSign className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">${stats.total.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatSle(stats.total)}</p>
+                <p className="text-xs text-muted-foreground">{formatUsd(stats.total / 24)}</p>
                 <p className="text-xs text-muted-foreground">Total Expenses</p>
               </div>
             </div>
@@ -283,7 +289,8 @@ export default function ExpensesPage() {
                 <Clock className="w-5 h-5 text-yellow-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">${stats.pending.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatSle(stats.pending)}</p>
+                <p className="text-xs text-muted-foreground">{formatUsd(stats.pending / 24)}</p>
                 <p className="text-xs text-muted-foreground">Pending</p>
               </div>
             </div>
@@ -296,7 +303,8 @@ export default function ExpensesPage() {
                 <CheckCircle className="w-5 h-5 text-green-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">${stats.approved.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatSle(stats.approved)}</p>
+                <p className="text-xs text-muted-foreground">{formatUsd(stats.approved / 24)}</p>
                 <p className="text-xs text-muted-foreground">Approved</p>
               </div>
             </div>
@@ -309,7 +317,8 @@ export default function ExpensesPage() {
                 <Calendar className="w-5 h-5 text-blue-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">${stats.thisMonth.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatSle(stats.thisMonth)}</p>
+                <p className="text-xs text-muted-foreground">{formatUsd(stats.thisMonth / 24)}</p>
                 <p className="text-xs text-muted-foreground">This Month</p>
               </div>
             </div>
@@ -415,7 +424,7 @@ export default function ExpensesPage() {
                   <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
                   <TableCell>{expense.vendor || '-'}</TableCell>
                   <TableCell className="text-right font-medium">
-                    ${expense.amount.toLocaleString()}
+                    {expenseMoney(expense.amount)}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={statusColors[expense.status]}>
@@ -489,7 +498,7 @@ export default function ExpensesPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Amount *</Label>
+              <Label>Amount (SLE) *</Label>
               <Input
                 type="number"
                 step="0.01"
