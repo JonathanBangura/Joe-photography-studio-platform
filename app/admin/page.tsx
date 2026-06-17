@@ -11,7 +11,33 @@ import {
   ArrowUpRight,
   ArrowDownRight,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import Link from 'next/link'
+import { formatSle, formatUsd } from '@/lib/currency'
+
+type StatCard = {
+  title: string
+  value: string | number
+  secondaryValue?: string
+  icon: LucideIcon
+  change: string
+  changeType: 'positive' | 'warning' | 'negative'
+  href: string
+}
+
+function toUsd(sle: number, exchangeRate = 24) {
+  return Number((Number(sle || 0) / exchangeRate).toFixed(2))
+}
+
+function getBookingClientName(booking: any) {
+  return (
+    booking.client?.full_name ||
+    booking.client?.profile?.full_name ||
+    booking.client?.email ||
+    booking.client?.profile?.email ||
+    'Unknown Client'
+  )
+}
 
 async function getDashboardStats() {
   const supabase = await createClient()
@@ -42,14 +68,13 @@ async function getDashboardStats() {
     .from('clients')
     .select('*', { count: 'exact', head: true })
 
-  // Get this month's revenue
-  const { data: monthInvoices } = await supabase
-    .from('invoices')
-    .select('total_amount')
-    .eq('payment_status', 'paid')
-    .gte('paid_date', startOfMonth)
+  // Payment amounts are stored in SLE. Use the payment ledger for collected monthly revenue.
+  const { data: monthPayments } = await supabase
+    .from('payments')
+    .select('amount, payment_date, created_at')
+    .gte('created_at', startOfMonth)
 
-  const monthRevenue = monthInvoices?.reduce((sum, inv) => sum + (inv.total_amount || 0), 0) || 0
+  const monthRevenue = monthPayments?.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) || 0
 
   // Get unread messages
   const { count: unreadMessages } = await supabase
@@ -78,7 +103,7 @@ async function getDashboardStats() {
 export default async function AdminDashboard() {
   const stats = await getDashboardStats()
 
-  const statCards = [
+  const statCards: StatCard[] = [
     {
       title: 'Total Bookings',
       value: stats.totalBookings,
@@ -97,11 +122,12 @@ export default async function AdminDashboard() {
     },
     {
       title: 'Monthly Revenue',
-      value: `$${stats.monthRevenue.toLocaleString()}`,
+      value: formatSle(stats.monthRevenue),
+      secondaryValue: formatUsd(toUsd(stats.monthRevenue)),
       icon: DollarSign,
       change: '+23%',
       changeType: 'positive' as const,
-      href: '/admin/invoices',
+      href: '/admin/finance',
     },
     {
       title: 'Pending Bookings',
@@ -148,6 +174,9 @@ export default async function AdminDashboard() {
                   </div>
                 </div>
                 <p className="text-2xl font-bold mt-4">{stat.value}</p>
+                {'secondaryValue' in stat && stat.secondaryValue && (
+                  <p className="text-xs text-muted-foreground mt-1">{stat.secondaryValue}</p>
+                )}
                 <p className="text-sm text-muted-foreground mt-1">{stat.title}</p>
               </CardContent>
             </Card>
@@ -183,7 +212,7 @@ export default async function AdminDashboard() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium truncate">
-                        {booking.client?.profile?.full_name || 'Unknown Client'}
+                        {getBookingClientName(booking)}
                       </p>
                       <p className="text-sm text-muted-foreground truncate">
                         {booking.service?.name || 'Service'}
@@ -233,7 +262,7 @@ export default async function AdminDashboard() {
                     }`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">
-                        {booking.client?.profile?.full_name || 'Unknown Client'}
+                        {getBookingClientName(booking)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking.service?.name} - {new Date(booking.booking_date).toLocaleDateString()}
@@ -263,7 +292,7 @@ export default async function AdminDashboard() {
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Link
-              href="/admin/bookings/new"
+              href="/admin/bookings"
               className="flex flex-col items-center gap-2 p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-center"
             >
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -272,7 +301,7 @@ export default async function AdminDashboard() {
               <span className="text-sm font-medium">New Booking</span>
             </Link>
             <Link
-              href="/admin/clients/new"
+              href="/admin/clients"
               className="flex flex-col items-center gap-2 p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-center"
             >
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -281,7 +310,7 @@ export default async function AdminDashboard() {
               <span className="text-sm font-medium">Add Client</span>
             </Link>
             <Link
-              href="/admin/invoices/new"
+              href="/admin/invoices"
               className="flex flex-col items-center gap-2 p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-center"
             >
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -290,7 +319,7 @@ export default async function AdminDashboard() {
               <span className="text-sm font-medium">Create Invoice</span>
             </Link>
             <Link
-              href="/admin/messages"
+              href="/admin/inquiries"
               className="flex flex-col items-center gap-2 p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-center relative"
             >
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
