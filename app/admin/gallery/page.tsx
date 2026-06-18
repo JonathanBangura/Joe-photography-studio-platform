@@ -6,7 +6,7 @@ export default async function AdminGalleryPage() {
 
   const { data: galleries } = await supabase
     .from('client_galleries')
-    .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected)')
+    .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected, photo_stage)')
     .order('created_at', { ascending: false })
 
   const { data: bookings } = await supabase

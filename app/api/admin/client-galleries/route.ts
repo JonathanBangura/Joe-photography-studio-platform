@@ -9,7 +9,7 @@ const gallerySelect = `
   *,
   client:clients(*, profile:profiles(*)),
   booking:bookings(*, service:services(*)),
-  photos:client_gallery_photos(id, is_selected)
+  photos:client_gallery_photos(id, is_selected, photo_stage)
 `
 
 export async function POST(request: Request) {
@@ -29,6 +29,31 @@ export async function POST(request: Request) {
       )
     }
 
+    const { data: existingGallery, error: existingGalleryError } = await supabase
+      .from("client_galleries")
+      .select(gallerySelect)
+      .eq("booking_id", bookingId)
+      .maybeSingle()
+
+    if (existingGalleryError) throw existingGalleryError
+
+    if (existingGallery) {
+      await supabase.from("audit_logs").insert({
+        action: "reuse_client_gallery",
+        resource_type: "client_gallery",
+        resource_id: existingGallery.id,
+        new_data: {
+          booking_id: bookingId,
+          client_id: clientId,
+          access_code: existingGallery.access_code,
+        },
+        ip_address: request.headers.get("x-forwarded-for"),
+        user_agent: request.headers.get("user-agent"),
+      })
+
+      return NextResponse.json({ gallery: existingGallery, reused: true })
+    }
+
     const { data, error } = await supabase
       .from("client_galleries")
       .insert({
@@ -38,6 +63,7 @@ export async function POST(request: Request) {
         access_code: generateAccessCode(),
         expires_at: expiresAt,
         is_active: false,
+        status: "draft",
       })
       .select(gallerySelect)
       .single()
@@ -90,7 +116,11 @@ export async function PATCH(request: Request) {
 
     const { data, error } = await supabase
       .from("client_galleries")
-      .update({ is_active: isActive })
+      .update({
+        is_active: isActive,
+        status: isActive ? "published" : "draft",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .select(gallerySelect)
       .single()

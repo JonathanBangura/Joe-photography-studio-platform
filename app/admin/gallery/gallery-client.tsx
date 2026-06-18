@@ -51,6 +51,7 @@ type BookingRecord = {
 type GalleryPhotoRecord = {
   id: string
   is_selected: boolean | null
+  photo_stage?: 'selection' | 'edited' | null
 }
 
 type GalleryRecord = {
@@ -61,6 +62,15 @@ type GalleryRecord = {
   access_code: string | null
   expires_at: string | null
   is_active: boolean | null
+  status?:
+    | 'draft'
+    | 'published'
+    | 'selection_submitted'
+    | 'editing'
+    | 'final_uploaded'
+    | 'delivered'
+    | 'completed'
+    | null
   created_at: string
   client?: ClientRecord | null
   booking?: BookingRecord | null
@@ -85,7 +95,21 @@ function getPhotoCount(gallery: GalleryRecord) {
 }
 
 function getSelectedCount(gallery: GalleryRecord) {
-  return gallery.photos?.filter((photo) => photo.is_selected).length || 0
+  return gallery.photos?.filter((photo) => photo.photo_stage !== 'edited' && photo.is_selected).length || 0
+}
+
+function getGalleryStatusLabel(gallery: GalleryRecord) {
+  const status = gallery.status || (gallery.is_active ? 'published' : 'draft')
+  const labels: Record<string, string> = {
+    draft: 'Draft',
+    published: 'Selection Open',
+    selection_submitted: 'Selection Submitted',
+    editing: 'Editing',
+    final_uploaded: 'Finals Uploaded',
+    delivered: 'Delivered',
+    completed: 'Completed',
+  }
+  return labels[status] || status.replace(/_/g, ' ')
 }
 
 function formatDate(value?: string | null) {
@@ -138,7 +162,7 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
     const supabase = createClient()
     const { data, error } = await supabase
       .from('client_galleries')
-      .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected)')
+      .select('*, client:clients(*, profile:profiles(*)), booking:bookings(*, service:services(*)), photos:client_gallery_photos(id, is_selected, photo_stage)')
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -188,8 +212,11 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
 
       const createdGallery = result.gallery as GalleryRecord
 
-      toast.success('Gallery created')
-      setGalleries([createdGallery, ...galleries])
+      toast.success(result.reused ? 'Existing gallery reused — same client link kept' : 'Gallery created')
+      setGalleries((current) => [
+        createdGallery,
+        ...current.filter((gallery) => gallery.id !== createdGallery.id),
+      ])
       setSelectedBookingId('')
       setCustomTitle('')
       setExpiresAt('')
@@ -257,7 +284,9 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Create Client Gallery</DialogTitle>
-              <DialogDescription>Select a booking, generate an access code, and prepare a draft gallery for photo upload.</DialogDescription>
+              <DialogDescription>
+                Select a booking once. The same gallery link is reused for client selection and final delivery.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -385,7 +414,7 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
                       <div className="text-xs text-muted-foreground">{getSelectedCount(gallery)} selected</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={gallery.is_active ? 'default' : 'secondary'}>{gallery.is_active ? 'Published' : 'Draft'}</Badge>
+                      <Badge variant={gallery.is_active ? 'default' : 'secondary'}>{getGalleryStatusLabel(gallery)}</Badge>
                     </TableCell>
                     <TableCell>
                       <div className="font-mono text-sm">{gallery.access_code}</div>
@@ -411,8 +440,8 @@ export function GalleryClient({ initialGalleries, bookings }: GalleryClientProps
 
       <Card className="border-dashed">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base"><Shield className="h-4 w-4" />Phase 5A scope</CardTitle>
-          <CardDescription>This release creates private galleries and access links. Photo uploads and client selections come in Phase 5B/5D.</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-base"><Shield className="h-4 w-4" />Client link rule</CardTitle>
+          <CardDescription>Each booking uses one private gallery link from proof selection through final delivery. Upload finals inside the existing gallery instead of creating another gallery.</CardDescription>
         </CardHeader>
       </Card>
     </div>
