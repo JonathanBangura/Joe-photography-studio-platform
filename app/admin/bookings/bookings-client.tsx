@@ -181,9 +181,21 @@ function getBookingDepositPaidSle(booking: ExtendedBooking) {
   )
 }
 
+function getResourcesForEnvironment(resources: StudioResource[], environment: string) {
+  return resources.filter((resource) => {
+    if (environment === 'indoor') return resource.type === 'indoor' || resource.type === 'desk'
+    return resource.type === environment
+  })
+}
+
+function isResourceRequired(environment: string) {
+  return environment !== 'outdoor'
+}
+
 export function BookingsClient({ initialBookings, services, clients, staff, resources }: BookingsClientProps) {
   const router = useRouter()
   const [bookings, setBookings] = useState(initialBookings)
+  const [studioResources, setStudioResources] = useState(resources)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -219,6 +231,25 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false)
   const [paymentLinkSaving, setPaymentLinkSaving] = useState(false)
   const [paymentLinkExpiry, setPaymentLinkExpiry] = useState('')
+
+  useEffect(() => {
+    setStudioResources(resources)
+  }, [resources])
+
+  useEffect(() => {
+    if (studioResources.length > 0) return
+
+    fetch('/api/admin/studio-resources', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((result) => {
+        if (Array.isArray(result?.resources)) {
+          setStudioResources(result.resources)
+        }
+      })
+      .catch((error) => {
+        console.error('Studio resources load error:', error)
+      })
+  }, [studioResources.length])
 
   useEffect(() => {
     fetch('/api/business-settings')
@@ -359,8 +390,13 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   }
 
   const handleCreateBooking = async () => {
-    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time || !newBooking.resource_id) {
-      toast.error('Please select service, date, time and resource')
+    if (!newBooking.service_id || !newBooking.booking_date || !newBooking.start_time) {
+      toast.error('Please select service, date and time')
+      return
+    }
+
+    if (isResourceRequired(newBooking.booking_environment) && !newBooking.resource_id) {
+      toast.error('Please select a resource for indoor studio or event bookings')
       return
     }
     if (clientMode === 'existing' && !newBooking.existing_client_id) {
@@ -496,7 +532,7 @@ const response = await fetch('/api/bookings', {
         service: selectedService,
         client: result.client,
         staff: staff.find((member) => member.id === newBooking.staff_id) || null,
-        resource: resources.find((resource) => resource.id === newBooking.resource_id) || null,
+        resource: studioResources.find((resource) => resource.id === newBooking.resource_id) || null,
       }
 
       setBookings([enrichedBooking, ...bookings])
@@ -634,7 +670,7 @@ const response = await fetch('/api/bookings', {
         ...payload,
         status: payload.status as Booking['status'],
         staff: staff.find((member) => member.id === payload.staff_id) || null,
-        resource: resources.find((resource) => resource.id === payload.resource_id) || null,
+        resource: studioResources.find((resource) => resource.id === payload.resource_id) || null,
       } as ExtendedBooking
     })
 
@@ -807,20 +843,33 @@ const response = await fetch('/api/bookings', {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Resource *</Label>
-                    <Select value={newBooking.resource_id} onValueChange={(value) => setNewBooking({ ...newBooking, resource_id: value })}>
+                    <Label>Resource {isResourceRequired(newBooking.booking_environment) ? '*' : '(optional)'}</Label>
+                    <Select
+                      value={newBooking.resource_id || 'none'}
+                      onValueChange={(value) => setNewBooking({ ...newBooking, resource_id: value === 'none' ? '' : value })}
+                    >
                       <SelectTrigger><SelectValue placeholder="Select resource" /></SelectTrigger>
                       <SelectContent>
-                        {resources
-                          .filter((resource) => {
-                            if (newBooking.booking_environment === 'indoor') return resource.type === 'indoor' || resource.type === 'desk'
-                            return resource.type === newBooking.booking_environment
-                          })
-                          .map((resource) => (
-                            <SelectItem key={resource.id} value={resource.id}>{resource.name}</SelectItem>
-                          ))}
+                        {isResourceRequired(newBooking.booking_environment) ? (
+                          <SelectItem value="none" disabled>Select resource</SelectItem>
+                        ) : (
+                          <SelectItem value="none">No specific resource</SelectItem>
+                        )}
+                        {getResourcesForEnvironment(studioResources, newBooking.booking_environment).map((resource) => (
+                          <SelectItem key={resource.id} value={resource.id}>{resource.name}</SelectItem>
+                        ))}
+                        {getResourcesForEnvironment(studioResources, newBooking.booking_environment).length === 0 && isResourceRequired(newBooking.booking_environment) && (
+                          <SelectItem value="__empty" disabled>No active resources configured</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
+                    {getResourcesForEnvironment(studioResources, newBooking.booking_environment).length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {isResourceRequired(newBooking.booking_environment)
+                          ? 'Add an active studio resource before creating this booking type.'
+                          : 'Outdoor bookings can continue without assigning a resource.'}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <label className="flex items-start gap-2 text-sm">
@@ -1205,15 +1254,33 @@ const response = await fetch('/api/bookings', {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Resource</Label>
-                  <Select value={editBooking.resource_id} onValueChange={(value) => setEditBooking({ ...editBooking, resource_id: value })}>
+                  <Label>Resource {isResourceRequired(editBooking.booking_environment) ? '*' : '(optional)'}</Label>
+                  <Select
+                    value={editBooking.resource_id || 'none'}
+                    onValueChange={(value) => setEditBooking({ ...editBooking, resource_id: value === 'none' ? '' : value })}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select resource" /></SelectTrigger>
                     <SelectContent>
-                      {resources.filter((resource) => editBooking.booking_environment === 'indoor' ? resource.type === 'indoor' || resource.type === 'desk' : resource.type === editBooking.booking_environment).map((resource) => (
+                      {isResourceRequired(editBooking.booking_environment) ? (
+                        <SelectItem value="none" disabled>Select resource</SelectItem>
+                      ) : (
+                        <SelectItem value="none">No specific resource</SelectItem>
+                      )}
+                      {getResourcesForEnvironment(studioResources, editBooking.booking_environment).map((resource) => (
                         <SelectItem key={resource.id} value={resource.id}>{resource.name}</SelectItem>
                       ))}
+                      {getResourcesForEnvironment(studioResources, editBooking.booking_environment).length === 0 && isResourceRequired(editBooking.booking_environment) && (
+                        <SelectItem value="__empty" disabled>No active resources configured</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
+                  {getResourcesForEnvironment(studioResources, editBooking.booking_environment).length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {isResourceRequired(editBooking.booking_environment)
+                        ? 'Add an active studio resource before saving this booking type.'
+                        : 'Outdoor bookings can continue without assigning a resource.'}
+                    </p>
+                  )}
                 </div>
               </div>
               <label className="flex items-start gap-2 text-sm">

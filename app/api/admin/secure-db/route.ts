@@ -48,7 +48,7 @@ const TABLES: Record<
   },
   expenses: {
     actions: ["insert", "update", "delete"],
-    defaultSelect: "*, category:expense_categories(*), creator:profiles!expenses_created_by_fkey(full_name), approver:profiles!expenses_approved_by_fkey(full_name)",
+    defaultSelect: "*, category:expense_categories(*)",
   },
   equipment: {
     actions: ["insert", "update", "delete"],

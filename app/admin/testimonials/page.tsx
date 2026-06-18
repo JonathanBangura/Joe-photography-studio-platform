@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Search, RefreshCw, Star, CheckCircle, XCircle, Trash2, Eye, MessageSquareQuote } from 'lucide-react'
+import { Search, RefreshCw, Star, CheckCircle, XCircle, Trash2, Eye, MessageSquareQuote, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -62,7 +62,15 @@ export default function AdminTestimonialsPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [selectedTestimonial, setSelectedTestimonial] = useState<Testimonial | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
   const [editContent, setEditContent] = useState('')
+  const [newTestimonial, setNewTestimonial] = useState({
+    client_name: '',
+    content: '',
+    rating: 5,
+    is_approved: true,
+    is_featured: false,
+  })
 
   useEffect(() => {
     fetchTestimonials()
@@ -72,7 +80,7 @@ export default function AdminTestimonialsPage() {
     setLoading(true)
     try {
       const response = await fetch('/api/admin/testimonials', { cache: 'no-store' })
-      const result = await response.json()
+      const result = await response.json().catch(() => ({ error: response.statusText }))
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to load testimonials')
@@ -101,7 +109,7 @@ export default function AdminTestimonialsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const result = await response.json()
+      const result = await response.json().catch(() => ({ error: response.statusText }))
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to update testimonial')
@@ -132,7 +140,7 @@ export default function AdminTestimonialsPage() {
       const response = await fetch(`/api/admin/testimonials/${id}`, {
         method: 'DELETE',
       })
-      const result = await response.json()
+      const result = await response.json().catch(() => ({ error: response.statusText }))
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to delete testimonial')
@@ -144,6 +152,67 @@ export default function AdminTestimonialsPage() {
     } catch (error) {
       console.error('Delete testimonial error:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to delete testimonial')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function createTestimonial() {
+    if (!newTestimonial.client_name.trim() || !newTestimonial.content.trim()) {
+      toast.error('Client name and testimonial content are required')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const response = await fetch('/api/admin/testimonials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTestimonial),
+      })
+      const result = await response.json().catch(() => ({ error: response.statusText }))
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to create testimonial')
+      }
+
+      setTestimonials((current) => [result.testimonial, ...current])
+      setNewTestimonial({
+        client_name: '',
+        content: '',
+        rating: 5,
+        is_approved: true,
+        is_featured: false,
+      })
+      setAddOpen(false)
+      toast.success('Testimonial added')
+    } catch (error) {
+      console.error('Create testimonial error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to create testimonial')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function seedStarterTestimonials() {
+    setSaving(true)
+    try {
+      const response = await fetch('/api/admin/testimonials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seed_starter: true }),
+      })
+      const result = await response.json().catch(() => ({ error: response.statusText }))
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to load starter testimonials')
+      }
+
+      setTestimonials((current) => [...(result.testimonials || []), ...current])
+      toast.success('Starter testimonials added')
+    } catch (error) {
+      console.error('Seed starter testimonials error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to add starter testimonials')
     } finally {
       setSaving(false)
     }
@@ -177,10 +246,16 @@ export default function AdminTestimonialsPage() {
           <h1 className="font-serif text-3xl font-bold">Testimonials</h1>
           <p className="text-muted-foreground">Review, approve, feature, or remove client testimonials.</p>
         </div>
-        <Button variant="outline" onClick={fetchTestimonials} disabled={loading}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={fetchTestimonials} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Testimonial
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -288,7 +363,24 @@ export default function AdminTestimonialsPage() {
                 {filteredTestimonials.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="py-14 text-center text-muted-foreground">
-                      {loading ? 'Loading testimonials...' : 'No testimonials found'}
+                      {loading ? (
+                        'Loading testimonials...'
+                      ) : (
+                        <div className="space-y-4">
+                          <p>No testimonials found</p>
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <Button size="sm" onClick={() => setAddOpen(true)}>
+                              <Plus className="mr-2 h-4 w-4" />
+                              Add Testimonial
+                            </Button>
+                            {testimonials.length === 0 && (
+                              <Button size="sm" variant="outline" onClick={seedStarterTestimonials} disabled={saving}>
+                                Load Starter Testimonials
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 )}
@@ -297,6 +389,72 @@ export default function AdminTestimonialsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Add Testimonial</DialogTitle>
+            <DialogDescription>Create a testimonial that can be approved and shown on the public website.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Client Name</Label>
+              <Input
+                value={newTestimonial.client_name}
+                onChange={(event) => setNewTestimonial((current) => ({ ...current, client_name: event.target.value }))}
+                placeholder="Client name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rating</Label>
+              <Select
+                value={String(newTestimonial.rating)}
+                onValueChange={(value) => setNewTestimonial((current) => ({ ...current, rating: Number(value) }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 Stars</SelectItem>
+                  <SelectItem value="4">4 Stars</SelectItem>
+                  <SelectItem value="3">3 Stars</SelectItem>
+                  <SelectItem value="2">2 Stars</SelectItem>
+                  <SelectItem value="1">1 Star</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Content</Label>
+              <Textarea
+                value={newTestimonial.content}
+                onChange={(event) => setNewTestimonial((current) => ({ ...current, content: event.target.value }))}
+                placeholder="Write the client testimonial..."
+                rows={6}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant={newTestimonial.is_approved ? 'default' : 'outline'}
+                onClick={() => setNewTestimonial((current) => ({ ...current, is_approved: !current.is_approved }))}
+              >
+                {newTestimonial.is_approved ? 'Approved' : 'Pending'}
+              </Button>
+              <Button
+                type="button"
+                variant={newTestimonial.is_featured ? 'default' : 'outline'}
+                onClick={() => setNewTestimonial((current) => ({ ...current, is_featured: !current.is_featured, is_approved: current.is_featured ? current.is_approved : true }))}
+              >
+                {newTestimonial.is_featured ? 'Featured' : 'Feature'}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={createTestimonial} disabled={saving}>
+              {saving ? 'Saving...' : 'Add Testimonial'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
         <DialogContent className="max-w-2xl">

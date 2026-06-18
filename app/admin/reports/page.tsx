@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { formatSle, formatUsd } from '@/lib/currency'
 import {
   BarChart3,
   TrendingUp,
@@ -80,6 +81,30 @@ function numberValue(value: unknown) {
   return Number(value || 0)
 }
 
+function rate(value?: number | null) {
+  return Number(value || 24) || 24
+}
+
+function toSle(usd: number, exchangeRate: number) {
+  return Number((Number(usd || 0) * exchangeRate).toFixed(2))
+}
+
+function toUsd(sle: number, exchangeRate: number) {
+  return Number((Number(sle || 0) / exchangeRate).toFixed(2))
+}
+
+function recordSle(record: { total_amount?: number | null; total_amount_sle?: number | null; exchange_rate?: number | null }) {
+  return Number(record.total_amount_sle ?? toSle(numberValue(record.total_amount), rate(record.exchange_rate)))
+}
+
+function discountSle(record: { discount_amount?: number | null; discount_amount_sle?: number | null; exchange_rate?: number | null }) {
+  return Number(record.discount_amount_sle ?? toSle(numberValue(record.discount_amount), rate(record.exchange_rate)))
+}
+
+function formatCurrency(amountSle: number, amountUsd?: number | null) {
+  return `${formatSle(amountSle)} / ${formatUsd(amountUsd ?? toUsd(amountSle, 24))}`
+}
+
 function pctChange(current: number, previous: number) {
   if (previous === 0 && current > 0) return 100
   if (previous === 0) return 0
@@ -136,6 +161,7 @@ export default function ReportsPage() {
             created_at,
             invoice:invoices(
               invoice_number,
+              exchange_rate,
               client:clients(full_name, email),
               booking:bookings(service:services(name))
             )
@@ -148,7 +174,7 @@ export default function ReportsPage() {
           .eq('status', 'approved'),
         supabase
           .from('bookings')
-          .select('status, service_id, total_amount, created_at, services(name)')
+          .select('status, service_id, total_amount, total_amount_sle, exchange_rate, created_at, services(name)')
           .gte('created_at', previousStartIso),
         supabase
           .from('clients')
@@ -159,10 +185,13 @@ export default function ReportsPage() {
           .select(`
             invoice_number,
             total_amount,
+            total_amount_sle,
+            exchange_rate,
             payment_status,
             created_at,
             due_date,
             discount_amount,
+            discount_amount_sle,
             discount_reason,
             client:clients(full_name, email)
           `)
@@ -214,8 +243,8 @@ export default function ReportsPage() {
       const paidInvoices = currentInvoices.filter((invoice) => invoice.payment_status === 'paid').length
       const outstandingAmount = currentInvoices
         .filter((invoice) => invoice.payment_status !== 'paid' && invoice.payment_status !== 'cancelled')
-        .reduce((sum, invoice) => sum + numberValue(invoice.total_amount), 0)
-      const totalDiscounts = currentInvoices.reduce((sum, invoice) => sum + numberValue(invoice.discount_amount), 0)
+        .reduce((sum, invoice) => sum + recordSle(invoice), 0)
+      const totalDiscounts = currentInvoices.reduce((sum, invoice) => sum + discountSle(invoice), 0)
 
       const serviceMap = new Map<string, { count: number; revenue: number }>()
       currentBookings.forEach((booking: any) => {
@@ -223,7 +252,7 @@ export default function ReportsPage() {
         const existing = serviceMap.get(serviceName) || { count: 0, revenue: 0 }
         serviceMap.set(serviceName, {
           count: existing.count + 1,
-          revenue: existing.revenue + numberValue(booking.total_amount),
+          revenue: existing.revenue + recordSle(booking),
         })
       })
       const topServices = Array.from(serviceMap.entries())
@@ -273,7 +302,7 @@ export default function ReportsPage() {
         const existing = invoiceStatusMap.get(status) || { count: 0, amount: 0 }
         invoiceStatusMap.set(status, {
           count: existing.count + 1,
-          amount: existing.amount + numberValue(invoice.total_amount),
+          amount: existing.amount + recordSle(invoice),
         })
       })
       const invoiceStatus = Array.from(invoiceStatusMap.entries()).map(([status, data]) => ({ status, ...data }))
@@ -295,11 +324,11 @@ export default function ReportsPage() {
         }))
 
       const discounts = currentInvoices
-        .filter((invoice) => numberValue(invoice.discount_amount) > 0)
+        .filter((invoice) => discountSle(invoice) > 0)
         .map((invoice: any) => ({
           invoice: invoice.invoice_number,
           client: invoice.client?.full_name || invoice.client?.email || 'Unknown',
-          amount: numberValue(invoice.discount_amount),
+          amount: discountSle(invoice),
           reason: invoice.discount_reason || 'No reason recorded',
         }))
 
@@ -335,22 +364,19 @@ export default function ReportsPage() {
     }
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-    }).format(amount)
-  }
-
   function exportReport() {
     const rows = [
       ['Metric', 'Value'],
-      ['Total Revenue', stats.totalRevenue],
-      ['Total Expenses', stats.totalExpenses],
-      ['Net Profit', stats.netProfit],
-      ['Outstanding Amount', stats.outstandingAmount],
-      ['Total Discounts', stats.totalDiscounts],
+      ['Total Revenue SLE', stats.totalRevenue],
+      ['Total Revenue USD Estimate', toUsd(stats.totalRevenue, 24)],
+      ['Total Expenses SLE', stats.totalExpenses],
+      ['Total Expenses USD Estimate', toUsd(stats.totalExpenses, 24)],
+      ['Net Profit SLE', stats.netProfit],
+      ['Net Profit USD Estimate', toUsd(stats.netProfit, 24)],
+      ['Outstanding Amount SLE', stats.outstandingAmount],
+      ['Outstanding Amount USD Estimate', toUsd(stats.outstandingAmount, 24)],
+      ['Total Discounts SLE', stats.totalDiscounts],
+      ['Total Discounts USD Estimate', toUsd(stats.totalDiscounts, 24)],
       ['Total Bookings', stats.totalBookings],
       ['Completed Bookings', stats.completedBookings],
       ['New Clients', stats.newClients],
@@ -358,12 +384,12 @@ export default function ReportsPage() {
       ['Paid Invoices', stats.paidInvoices],
       [],
       ['Top Services'],
-      ['Service', 'Bookings', 'Revenue'],
-      ...stats.topServices.map((service) => [service.name, service.count, service.revenue]),
+      ['Service', 'Bookings', 'Revenue SLE', 'Revenue USD Estimate'],
+      ...stats.topServices.map((service) => [service.name, service.count, service.revenue, toUsd(service.revenue, 24)]),
       [],
       ['Payment Channels'],
-      ['Channel', 'Count', 'Amount'],
-      ...stats.paymentChannels.map((channel) => [channel.channel, channel.count, channel.amount]),
+      ['Channel', 'Count', 'Amount SLE', 'Amount USD Estimate'],
+      ...stats.paymentChannels.map((channel) => [channel.channel, channel.count, channel.amount, toUsd(channel.amount, 24)]),
     ]
 
     const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')

@@ -1,8 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { BookingsClient } from './bookings-client'
 
 export default async function BookingsPage() {
   const supabase = await createClient()
+  const adminSupabase = createAdminClient()
 
   const { data: bookings } = await supabase
     .from('bookings')
@@ -25,7 +27,7 @@ export default async function BookingsPage() {
     .in('studio_role', ['photographer', 'studio_manager', 'studio_admin', 'super_admin'])
     .eq('is_active', true)
 
-  const { data: resources } = await supabase
+  const { data: resources } = await adminSupabase
     .from('studio_resources')
     .select('*')
     .eq('is_active', true)

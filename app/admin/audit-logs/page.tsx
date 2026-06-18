@@ -45,7 +45,7 @@ export default function AuditLogsPage() {
     setLoading(true)
     try {
       const response = await fetch('/api/admin/audit-logs', { cache: 'no-store' })
-      const result = await response.json()
+      const result = await response.json().catch(() => ({ error: response.statusText }))
 
       if (!response.ok) {
         throw new Error(result.error || 'Failed to load audit logs')
