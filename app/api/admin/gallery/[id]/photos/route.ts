@@ -20,6 +20,9 @@ export async function POST(request: Request, { params }: Params) {
     const { id: galleryId } = await params;
     const formData = await request.formData();
     const files = formData.getAll("files").filter((item): item is File => item instanceof File);
+    const requestedStage = String(formData.get("photo_stage") || "selection");
+    const photoStage = requestedStage === "edited" ? "edited" : "selection";
+    const downloadEnabled = photoStage === "edited";
 
     if (!galleryId || files.length === 0) {
       return NextResponse.json({ error: "Gallery and photos are required" }, { status: 400 });
@@ -58,6 +61,8 @@ export async function POST(request: Request, { params }: Params) {
           thumbnail_url: publicUrlData.publicUrl,
           title: file.name,
           is_selected: false,
+          photo_stage: photoStage,
+          download_enabled: downloadEnabled,
         })
         .select("*")
         .single();
@@ -70,12 +75,22 @@ export async function POST(request: Request, { params }: Params) {
       uploadedPhotos.push(photo);
     }
 
+    if (photoStage === "edited") {
+      await context.supabase
+        .from("client_galleries")
+        .update({
+          status: "final_uploaded",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", galleryId);
+    }
+
     await context.supabase.from("audit_logs").insert({
       user_id: context.user.id,
       action: "upload_gallery_photos",
       resource_type: "client_gallery",
       resource_id: galleryId,
-      new_data: { gallery_id: galleryId, count: uploadedPhotos.length },
+      new_data: { gallery_id: galleryId, count: uploadedPhotos.length, photo_stage: photoStage },
       ip_address: request.headers.get("x-forwarded-for"),
       user_agent: request.headers.get("user-agent"),
     });
@@ -109,6 +124,7 @@ export async function PATCH(request: Request, { params }: Params) {
       .update({ is_selected: isSelected })
       .eq("id", photoId)
       .eq("gallery_id", galleryId)
+      .eq("photo_stage", "selection")
       .select("*")
       .single();
 
