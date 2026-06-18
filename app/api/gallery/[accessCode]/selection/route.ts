@@ -16,7 +16,7 @@ async function getGalleryByAccessCode(accessCode: string) {
   const normalizedCode = decodeURIComponent(accessCode || '').trim()
   const { data: gallery, error } = await supabase
     .from('client_galleries')
-    .select('id, access_code, is_active, expires_at, client_id, booking_id, title')
+    .select('id, access_code, is_active, expires_at, client_id, booking_id, title, status')
     .ilike('access_code', normalizedCode)
     .maybeSingle()
 
@@ -45,11 +45,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Gallery is not available for selection.' }, { status: 403 })
     }
 
+    if (['selection_submitted', 'editing', 'final_uploaded', 'delivered', 'completed'].includes(String(gallery.status || ''))) {
+      return NextResponse.json({ error: 'Selection has already been submitted and is now locked.' }, { status: 403 })
+    }
+
     const { data: photo, error: updateError } = await supabase
       .from('client_gallery_photos')
       .update({ is_selected: isSelected })
       .eq('id', photoId)
       .eq('gallery_id', gallery.id)
+      .eq('photo_stage', 'selection')
       .select('*')
       .single()
 
@@ -61,6 +66,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       .from('client_gallery_photos')
       .select('id', { count: 'exact', head: true })
       .eq('gallery_id', gallery.id)
+      .eq('photo_stage', 'selection')
       .eq('is_selected', true)
 
     return NextResponse.json({ photo, selected_count: count || 0 })
@@ -90,6 +96,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       .from('client_gallery_photos')
       .select('id, title, image_url')
       .eq('gallery_id', gallery.id)
+      .eq('photo_stage', 'selection')
       .eq('is_selected', true)
       .order('created_at', { ascending: true })
 
@@ -102,6 +109,16 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }
 
     const selectedPhotoIds = selectedPhotos.map((photo) => photo.id)
+    const now = new Date().toISOString()
+
+    await supabase
+      .from('client_galleries')
+      .update({
+        status: 'selection_submitted',
+        selection_submitted_at: now,
+        updated_at: now,
+      })
+      .eq('id', gallery.id)
 
     // 1. Log the submission action
     await supabase.from('audit_logs').insert({
