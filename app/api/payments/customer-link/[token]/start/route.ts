@@ -13,9 +13,11 @@ function money(value: unknown) {
 }
 
 function createOrderId() {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
-  const random = Math.random().toString(36).slice(2, 8).toUpperCase()
-  return `JSP-${stamp}-${random}`
+  const now = new Date()
+  const date = now.toISOString().slice(2, 10).replace(/-/g, '') // YYMMDD
+  const random = Math.random().toString(36).slice(2, 6).toUpperCase()
+
+  return `JOESTUDIO-${date}-${random}`
 }
 
 function isExpired(value?: string | null) {
