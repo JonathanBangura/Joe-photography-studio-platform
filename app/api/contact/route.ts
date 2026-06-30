@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isEmailConfigured, sendEmail } from '@/lib/mail'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 function escapeHtml(value: string) {
@@ -8,55 +9,6 @@ function escapeHtml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
-}
-
-async function sendEmail(options: {
-  to: string
-  subject: string
-  html: string
-}) {
-  const apiKey = process.env.RESEND_API_KEY
-  const from = process.env.RESEND_FROM_EMAIL
-
-  if (!apiKey || !from) {
-    return {
-      sent: false,
-      skipped: true,
-      reason:
-        'Email service is not configured. Add RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel.',
-    }
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-    }),
-  })
-
-  const result = await response.json().catch(() => null)
-
-  if (!response.ok) {
-    return {
-      sent: false,
-      skipped: false,
-      reason: result?.message || 'Failed to send email notification.',
-      result,
-    }
-  }
-
-  return {
-    sent: true,
-    skipped: false,
-    result,
-  }
 }
 
 async function getSetting(supabase: ReturnType<typeof createAdminClient>, key: string) {
@@ -122,30 +74,52 @@ export async function POST(request: Request) {
     const studioEmail =
       process.env.STUDIO_NOTIFICATION_EMAIL ||
       (await getSetting(supabase, 'email')) ||
-      process.env.RESEND_FROM_EMAIL ||
+      process.env.EMAIL_FROM ||
+      process.env.SMTP_USER ||
       ''
 
-    let emailNotification: Awaited<ReturnType<typeof sendEmail>> | null = null
+    let emailNotification: any = null
 
-    if (studioEmail) {
-      emailNotification = await sendEmail({
-        to: studioEmail,
-        subject: `New website inquiry${subject ? `: ${subject}` : ''}`,
-        html: `
-          <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
-            <h2>New Website Inquiry</h2>
-            <p><strong>Name:</strong> ${escapeHtml(name)}</p>
-            <p><strong>Email:</strong> ${escapeHtml(email)}</p>
-            <p><strong>Phone:</strong> ${escapeHtml(phone || 'N/A')}</p>
-            <p><strong>Session Type:</strong> ${escapeHtml(sessionType || 'N/A')}</p>
-            <p><strong>Preferred Date:</strong> ${escapeHtml(preferredDate || 'N/A')}</p>
-            <p><strong>Subject:</strong> ${escapeHtml(subject || 'No subject')}</p>
-            <div style="margin-top:16px;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
-              ${escapeHtml(message).replace(/\n/g, '<br />')}
+    if (!isEmailConfigured()) {
+      emailNotification = {
+        sent: false,
+        skipped: true,
+        reason:
+          'Email service is not configured. Add SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM in Vercel.',
+      }
+    } else if (studioEmail) {
+      try {
+        const result = await sendEmail({
+          to: studioEmail,
+          subject: `New website inquiry${subject ? `: ${subject}` : ''}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+              <h2>New Website Inquiry</h2>
+              <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+              <p><strong>Phone:</strong> ${escapeHtml(phone || 'N/A')}</p>
+              <p><strong>Session Type:</strong> ${escapeHtml(sessionType || 'N/A')}</p>
+              <p><strong>Preferred Date:</strong> ${escapeHtml(preferredDate || 'N/A')}</p>
+              <p><strong>Subject:</strong> ${escapeHtml(subject || 'No subject')}</p>
+              <div style="margin-top:16px;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
+                ${escapeHtml(message).replace(/\n/g, '<br />')}
+              </div>
             </div>
-          </div>
-        `,
-      })
+          `,
+        })
+
+        emailNotification = {
+          sent: true,
+          skipped: false,
+          messageId: result.messageId,
+        }
+      } catch (error) {
+        emailNotification = {
+          sent: false,
+          skipped: false,
+          reason: error instanceof Error ? error.message : 'Failed to send email notification.',
+        }
+      }
     }
 
     await supabase.from('audit_logs').insert({

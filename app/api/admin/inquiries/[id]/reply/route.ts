@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { sendEmail } from '@/lib/mail'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 
@@ -13,34 +14,6 @@ function escapeHtml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
-}
-
-async function sendEmail(to: string, subject: string, html: string) {
-  const apiKey = process.env.RESEND_API_KEY
-  const from = process.env.RESEND_FROM_EMAIL
-
-  if (!apiKey || !from) {
-    throw new Error(
-      'Email service is not configured. Add RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel.',
-    )
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ from, to, subject, html }),
-  })
-
-  const result = await response.json().catch(() => null)
-
-  if (!response.ok) {
-    throw new Error(result?.message || 'Failed to send email')
-  }
-
-  return result
 }
 
 export async function POST(request: Request, { params }: Params) {
@@ -83,7 +56,11 @@ export async function POST(request: Request, { params }: Params) {
       </div>
     `
 
-    const emailResult = await sendEmail(inquiry.email, subject, html)
+    const emailResult = await sendEmail({
+      to: inquiry.email,
+      subject,
+      html,
+    })
 
     const { data: updated, error: updateError } = await supabase
       .from('contact_submissions')
@@ -103,14 +80,17 @@ export async function POST(request: Request, { params }: Params) {
       new_data: {
         inquiry: updated,
         reply,
-        email_result: emailResult,
+        email_result: { messageId: emailResult.messageId },
         replied_by_email: user.email,
       },
       ip_address: request.headers.get('x-forwarded-for'),
       user_agent: request.headers.get('user-agent'),
     })
 
-    return NextResponse.json({ inquiry: updated, emailResult })
+    return NextResponse.json({
+      inquiry: updated,
+      emailResult: { messageId: emailResult.messageId },
+    })
   } catch (error) {
     console.error('Reply inquiry error:', error)
     return NextResponse.json(
