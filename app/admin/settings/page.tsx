@@ -16,19 +16,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Settings,
   Building2,
   Bell,
-  Mail,
   Globe,
   Palette,
-  Shield,
   Save,
   RefreshCw,
   Camera,
   Clock,
   DollarSign,
-  FileText,
+  Plus,
+  Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -58,6 +56,7 @@ type BusinessSettings = {
   cancellation_hours: number
   deposit_percentage: number
   email_notifications: boolean
+  notification_recipient_emails: string[]
   sms_notifications: boolean
   auto_confirm_bookings: boolean
   require_deposit: boolean
@@ -94,6 +93,7 @@ const defaultSettings: BusinessSettings = {
   cancellation_hours: 48,
   deposit_percentage: 25,
   email_notifications: true,
+  notification_recipient_emails: [],
   sms_notifications: false,
   auto_confirm_bookings: false,
   require_deposit: true,
@@ -102,6 +102,21 @@ const defaultSettings: BusinessSettings = {
   invoice_prefix: 'INV-',
   invoice_notes: '',
   contract_template: '',
+}
+
+function normalizeRecipientEmails(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((email) => String(email || '').trim()).filter(Boolean)
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[;,]/)
+      .map((email) => email.trim())
+      .filter(Boolean)
+  }
+
+  return []
 }
 
 export default function SettingsPage() {
@@ -127,9 +142,16 @@ export default function SettingsPage() {
         throw new Error(result.error || 'Unable to load settings')
       }
 
-      setSettings({
+      const loadedSettings = {
         ...defaultSettings,
         ...(result.settings || {}),
+      }
+
+      setSettings({
+        ...loadedSettings,
+        notification_recipient_emails: normalizeRecipientEmails(
+          loadedSettings.notification_recipient_emails,
+        ),
       })
     } catch (error) {
       console.error('Settings load error:', error)
@@ -143,12 +165,24 @@ export default function SettingsPage() {
     setSaving(true)
 
     try {
+      const normalizedSettings = {
+        ...settings,
+        notification_recipient_emails: Array.from(
+          new Set(
+            normalizeRecipientEmails(settings.notification_recipient_emails)
+              .map((email) => email.trim())
+              .filter(Boolean)
+              .map((email) => email.toLowerCase()),
+          ),
+        ),
+      }
+
       const response = await fetch('/api/business-settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ settings }),
+        body: JSON.stringify({ settings: normalizedSettings }),
       })
 
       const result = await response.json()
@@ -157,9 +191,16 @@ export default function SettingsPage() {
         throw new Error(result.error || 'Failed to save settings')
       }
 
-      setSettings({
+      const savedSettings = {
         ...defaultSettings,
-        ...(result.settings || settings),
+        ...(result.settings || normalizedSettings),
+      }
+
+      setSettings({
+        ...savedSettings,
+        notification_recipient_emails: normalizeRecipientEmails(
+          savedSettings.notification_recipient_emails,
+        ),
       })
 
       toast.success('Settings saved successfully')
@@ -173,6 +214,28 @@ export default function SettingsPage() {
 
   const updateSetting = (key: keyof BusinessSettings, value: any) => {
     setSettings((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const updateNotificationRecipient = (index: number, value: string) => {
+    setSettings((prev) => {
+      const emails = [...(prev.notification_recipient_emails || [])]
+      emails[index] = value
+      return { ...prev, notification_recipient_emails: emails }
+    })
+  }
+
+  const addNotificationRecipient = () => {
+    setSettings((prev) => ({
+      ...prev,
+      notification_recipient_emails: [...(prev.notification_recipient_emails || []), ''],
+    }))
+  }
+
+  const removeNotificationRecipient = (index: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      notification_recipient_emails: (prev.notification_recipient_emails || []).filter((_, itemIndex) => itemIndex !== index),
+    }))
   }
 
   if (loading) {
@@ -608,6 +671,55 @@ export default function SettingsPage() {
                     onCheckedChange={(checked) => updateSetting('email_notifications', checked)}
                   />
                 </div>
+
+                <div className="space-y-3 rounded-lg border border-border/50 bg-background/40 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="font-medium">Notification Recipients</p>
+                      <p className="text-sm text-muted-foreground">
+                        These people receive internal emails for enquiries, bookings, and payment links.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addNotificationRecipient}
+                      className="w-full sm:w-auto"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Email
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    {(settings.notification_recipient_emails || []).map((recipient, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          type="email"
+                          placeholder="owner@joestudio.com"
+                          value={recipient}
+                          onChange={(event) => updateNotificationRecipient(index, event.target.value)}
+                          className="bg-background/50"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => removeNotificationRecipient(index)}
+                          aria-label="Remove notification recipient"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    {(settings.notification_recipient_emails || []).length === 0 && (
+                      <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                        No extra recipients added. The system will still use active admin/staff emails and fallback settings.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">SMS Notifications</p>

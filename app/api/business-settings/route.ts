@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getPublicBusinessSettings } from '@/lib/business-settings-public'
+import { isBackOfficeStudioRole } from '@/lib/permissions'
 
 function settingCategory(key: string) {
   if (
@@ -43,6 +44,34 @@ function settingCategory(key: string) {
 
 export async function GET() {
   try {
+    const authSupabase = await createClient()
+    const {
+      data: { user },
+    } = await authSupabase.auth.getUser()
+
+    if (user) {
+      const supabase = createAdminClient()
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('studio_role, is_active')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profile?.is_active !== false && isBackOfficeStudioRole(profile?.studio_role)) {
+        const { data, error } = await supabase
+          .from('business_settings')
+          .select('key, value')
+
+        if (error) throw error
+
+        const settings = Object.fromEntries(
+          (data || []).map((item) => [item.key, item.value]),
+        )
+
+        return NextResponse.json({ settings })
+      }
+    }
+
     const settings = await getPublicBusinessSettings()
     return NextResponse.json({ settings })
   } catch (error) {
@@ -66,6 +95,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const supabase = createAdminClient()
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('studio_role, is_active')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (profile?.is_active === false || !isBackOfficeStudioRole(profile?.studio_role)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const body = await request.json()
     const settings = body.settings || body
 
@@ -76,7 +116,6 @@ export async function POST(request: Request) {
       )
     }
 
-    const supabase = createAdminClient()
     const now = new Date().toISOString()
 
     const rows = Object.entries(settings).map(([key, value]) => ({
