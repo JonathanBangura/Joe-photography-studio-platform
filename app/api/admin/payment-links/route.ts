@@ -1,5 +1,7 @@
 import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
+import { sendEmailSafely } from '@/lib/mail'
+import { getInternalNotificationRecipients } from '@/lib/notification-recipients'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminContext } from '@/lib/admin-auth'
 
@@ -10,6 +12,30 @@ function buildPaymentUrl(request: NextRequest, token: string) {
 
 function generateToken() {
   return randomBytes(18).toString('base64url').toUpperCase()
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function formatSle(value: unknown) {
+  return `SLE ${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function getInvoiceTotalSle(invoice: any) {
+  if (invoice?.total_amount_sle !== null && invoice?.total_amount_sle !== undefined) {
+    return Number(invoice.total_amount_sle || 0)
+  }
+
+  return Number(invoice?.total_amount || 0) * Number(invoice?.exchange_rate || invoice?.booking?.exchange_rate || 1)
 }
 
 async function findInvoiceForBooking(supabase: ReturnType<typeof createAdminClient>, bookingId: string) {
@@ -164,17 +190,91 @@ export async function POST(request: NextRequest) {
       data = created
     }
 
+    const paymentLink = await getPaymentLinkWithUrl(request, data)
+    if (!paymentLink) {
+      throw new Error('Payment link could not be prepared for email delivery.')
+    }
+
+    const customerEmail = String(invoice.client?.email || '').trim().toLowerCase()
+    const customerName = String(invoice.client?.full_name || 'there').trim()
+    const bookingReference = String(invoice.booking?.booking_reference || invoice.invoice_number || '').trim()
+    const shouldSendEmail = body.send_email !== false
+    const emailNotification = shouldSendEmail
+      ? await sendEmailSafely({
+          to: customerEmail,
+          subject: `JoeStudio payment link${bookingReference ? `: ${bookingReference}` : ''}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+              <h2>Your JoeStudio payment link</h2>
+              <p>Hello ${escapeHtml(customerName || 'there')},</p>
+              <p>Please use the secure link below to complete your payment.</p>
+              <div style="margin:20px 0;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
+                <p><strong>Invoice:</strong> ${escapeHtml(invoice.invoice_number || 'Invoice')}</p>
+                <p><strong>Booking Reference:</strong> ${escapeHtml(bookingReference || 'N/A')}</p>
+                <p><strong>Amount Due:</strong> ${escapeHtml(formatSle(getInvoiceTotalSle(invoice)))}</p>
+              </div>
+              <p>
+                <a href="${paymentLink.payment_url}" style="display:inline-block;padding:12px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px">
+                  Open Payment Link
+                </a>
+              </p>
+              <p style="font-size:13px;color:#6b7280">If the button does not open, copy and paste this link into your browser:<br />${paymentLink.payment_url}</p>
+              <p>Regards,<br />JoeStudio Photography</p>
+            </div>
+          `,
+        })
+      : {
+          sent: false,
+          skipped: true,
+          reason: 'Payment link email was disabled for this request.',
+        }
+
+    const internalRecipients = await getInternalNotificationRecipients(supabase, [
+      'super_admin',
+      'studio_admin',
+      'studio_manager',
+      'receptionist',
+    ])
+    const internalEmailNotification = await sendEmailSafely({
+      to: internalRecipients,
+      subject: `Payment link ready${bookingReference ? `: ${bookingReference}` : ''}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+          <h2>Payment Link Ready</h2>
+          <p><strong>Client:</strong> ${escapeHtml(customerName || 'Client')}</p>
+          <p><strong>Email:</strong> ${escapeHtml(customerEmail || 'N/A')}</p>
+          <p><strong>Invoice:</strong> ${escapeHtml(invoice.invoice_number || 'Invoice')}</p>
+          <p><strong>Booking Reference:</strong> ${escapeHtml(bookingReference || 'N/A')}</p>
+          <p><strong>Amount Due:</strong> ${escapeHtml(formatSle(getInvoiceTotalSle(invoice)))}</p>
+          <p><strong>Customer Email Sent:</strong> ${emailNotification.sent ? 'Yes' : 'No'}</p>
+          <p><strong>Payment Link:</strong> <a href="${paymentLink.payment_url}">${paymentLink.payment_url}</a></p>
+        </div>
+      `,
+    })
+
     await supabase.from('audit_logs').insert({
       user_id: context.user.id,
       action: existing && regenerate ? 'regenerate_payment_link' : existing ? 'update_payment_link' : 'create_payment_link',
       resource_type: 'payment_link',
       resource_id: data.id,
-      new_data: data,
+      new_data: {
+        payment_link: data,
+        payment_url: paymentLink.payment_url,
+        email_notifications: {
+          customer: emailNotification,
+          internal: internalEmailNotification,
+        },
+      },
       ip_address: request.headers.get('x-forwarded-for'),
       user_agent: request.headers.get('user-agent'),
     })
 
-    return NextResponse.json({ success: true, data: await getPaymentLinkWithUrl(request, data) })
+    return NextResponse.json({
+      success: true,
+      data: paymentLink,
+      email_notification: emailNotification,
+      internal_email_notification: internalEmailNotification,
+    })
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to create payment link' },
