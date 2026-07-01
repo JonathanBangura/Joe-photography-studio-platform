@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { sendEmailSafely } from '@/lib/mail'
+import { getInternalNotificationRecipients } from '@/lib/notification-recipients'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 
@@ -85,6 +87,32 @@ function appBaseUrl(request: NextRequest) {
     process.env.NEXT_PUBLIC_APP_URL ||
     `${request.headers.get('x-forwarded-proto') || 'https'}://${request.headers.get('host')}`
   )
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function formatSle(value: unknown) {
+  return `SLE ${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function formatBookingDate(value: string) {
+  if (!value) return 'To be confirmed'
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
 function normalizeEnvironment(value: unknown): BookingEnvironment {
@@ -468,12 +496,80 @@ export async function POST(request: NextRequest) {
 
     if (workflowError) throw workflowError
 
+    const customerEmail = String(client.email || email || '').trim().toLowerCase()
+    const customerEmailNotification = await sendEmailSafely({
+      to: customerEmail,
+      subject: `JoeStudio booking received: ${reference}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+          <h2>Your JoeStudio booking has been received</h2>
+          <p>Hello ${escapeHtml(client.full_name || fullName || 'there')},</p>
+          <p>Thank you for booking with JoeStudio. We have received your booking request and created your payment link.</p>
+          <div style="margin:20px 0;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
+            <p><strong>Booking Reference:</strong> ${escapeHtml(reference)}</p>
+            <p><strong>Package:</strong> ${escapeHtml(service.name || 'Photography session')}</p>
+            <p><strong>Date:</strong> ${escapeHtml(formatBookingDate(bookingDate))}</p>
+            <p><strong>Time:</strong> ${escapeHtml(startTime)} - ${escapeHtml(endTime)}</p>
+            <p><strong>Location:</strong> ${escapeHtml(booking.location || 'Studio')}</p>
+            <p><strong>Total:</strong> ${escapeHtml(formatSle(totalAmountSle))}</p>
+            <p><strong>Required Deposit:</strong> ${escapeHtml(formatSle(depositRequiredAmountSle))}</p>
+          </div>
+          <p>Please use the secure link below to complete your payment:</p>
+          <p>
+            <a href="${paymentLinkUrl}" style="display:inline-block;padding:12px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:8px">
+              Pay Booking Deposit
+            </a>
+          </p>
+          <p style="font-size:13px;color:#6b7280">If the button does not open, copy and paste this link into your browser:<br />${paymentLinkUrl}</p>
+          <p>Regards,<br />JoeStudio Photography</p>
+        </div>
+      `,
+    })
+
+    const internalRecipients = await getInternalNotificationRecipients(supabase, [
+      'super_admin',
+      'studio_admin',
+      'studio_manager',
+      'receptionist',
+    ])
+    const internalEmailNotification = await sendEmailSafely({
+      to: internalRecipients,
+      subject: `New booking received: ${reference}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+          <h2>New Booking Received</h2>
+          <p><strong>Booking Reference:</strong> ${escapeHtml(reference)}</p>
+          <p><strong>Client:</strong> ${escapeHtml(client.full_name || fullName || 'Client')}</p>
+          <p><strong>Email:</strong> ${escapeHtml(customerEmail || 'N/A')}</p>
+          <p><strong>Phone:</strong> ${escapeHtml(client.phone || phone || 'N/A')}</p>
+          <p><strong>Package:</strong> ${escapeHtml(service.name || 'Photography session')}</p>
+          <p><strong>Date:</strong> ${escapeHtml(formatBookingDate(bookingDate))}</p>
+          <p><strong>Time:</strong> ${escapeHtml(startTime)} - ${escapeHtml(endTime)}</p>
+          <p><strong>Source:</strong> ${escapeHtml(bookingSource.replace('_', ' '))}</p>
+          <p><strong>Total:</strong> ${escapeHtml(formatSle(totalAmountSle))}</p>
+          <p><strong>Required Deposit:</strong> ${escapeHtml(formatSle(depositRequiredAmountSle))}</p>
+          <p><strong>Payment Link:</strong> <a href="${paymentLinkUrl}">${paymentLinkUrl}</a></p>
+        </div>
+      `,
+    })
+
     await supabase.from('audit_logs').insert({
       user_id: body.created_by || null,
       action: 'create',
       resource_type: 'booking',
       resource_id: booking.id,
-      new_data: { booking, client, invoice, payment, workflow, paymentLink },
+      new_data: {
+        booking,
+        client,
+        invoice,
+        payment,
+        workflow,
+        paymentLink,
+        email_notifications: {
+          customer: customerEmailNotification,
+          internal: internalEmailNotification,
+        },
+      },
       ip_address: request.headers.get('x-forwarded-for'),
       user_agent: request.headers.get('user-agent'),
     })
@@ -485,6 +581,10 @@ export async function POST(request: NextRequest) {
       payment,
       workflow,
       payment_link: { ...paymentLink, url: paymentLinkUrl },
+      email_notifications: {
+        customer: customerEmailNotification,
+        internal: internalEmailNotification,
+      },
     })
   } catch (error) {
     console.error('Booking API error:', error)
