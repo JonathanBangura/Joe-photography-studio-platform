@@ -15,6 +15,7 @@ import {
   ImagePlus,
   Lock,
   Loader2,
+  Mail,
   Sparkles,
   Trash2,
   Upload,
@@ -187,6 +188,7 @@ export function GalleryDetailClient({
   );
   const [isDownloadingSelected, setIsDownloadingSelected] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isSendingGalleryEmail, setIsSendingGalleryEmail] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const proofPhotos = useMemo(
@@ -229,6 +231,41 @@ export function GalleryDetailClient({
     if (!galleryLink) return;
     await navigator.clipboard.writeText(galleryLink);
     toast.success("Gallery link copied");
+  };
+
+  const sendGalleryLinkEmail = async () => {
+    try {
+      setIsSendingGalleryEmail(true);
+
+      const response = await fetch(`/api/admin/gallery/${gallery.id}/email`, {
+        method: "POST",
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to send gallery link");
+      }
+
+      if (result.gallery) {
+        setGallery({
+          ...gallery,
+          ...result.gallery,
+          client: gallery.client,
+          booking: gallery.booking,
+          photos,
+        } as GalleryRecord);
+      }
+
+      toast.success("Gallery link sent to customer");
+      router.refresh();
+    } catch (error) {
+      console.error(error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to send gallery link",
+      );
+    } finally {
+      setIsSendingGalleryEmail(false);
+    }
   };
 
   const handleFileSelection = (files: FileList | null) => {
@@ -666,6 +703,18 @@ export function GalleryDetailClient({
               </Link>
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={sendGalleryLinkEmail}
+            disabled={!gallery.access_code || isSendingGalleryEmail}
+          >
+            {isSendingGalleryEmail ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Mail className="mr-2 h-4 w-4" />
+            )}
+            Send Link
+          </Button>
           <Button
             variant="outline"
             onClick={downloadSelectedPhotos}
