@@ -505,6 +505,10 @@ export async function POST(request: NextRequest) {
           <h2>Your JoeStudio booking has been received</h2>
           <p>Hello ${escapeHtml(client.full_name || fullName || 'there')},</p>
           <p>Thank you for booking with JoeStudio. We have received your booking request and created your payment link.</p>
+          <p>
+            After your session, we will send a private gallery link to this same email address.
+            You will use that one link to select your preferred photos and later download your final edited photos when they are ready.
+          </p>
           <div style="margin:20px 0;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
             <p><strong>Booking Reference:</strong> ${escapeHtml(reference)}</p>
             <p><strong>Package:</strong> ${escapeHtml(service.name || 'Photography session')}</p>
