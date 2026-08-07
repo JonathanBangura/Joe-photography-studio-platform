@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,6 +14,12 @@ import { Badge } from '@/components/ui/badge'
 import { Edit, Eye, LinkIcon, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
+import {
+  optimizePortfolioImage,
+  PORTFOLIO_COMPRESSION_THRESHOLD_BYTES,
+  PORTFOLIO_MAX_LONG_EDGE,
+  type PortfolioImageOptimizationReason,
+} from '@/lib/image-compression'
 import {
   formatFileSize,
   GALLERY_IMAGES_BUCKET,
@@ -47,6 +53,10 @@ type GalleryForm = {
 
 type SelectedPortfolioImage = {
   file: File
+  originalName: string
+  originalSize: number
+  optimized: boolean
+  optimizationReason: PortfolioImageOptimizationReason | 'optimization-failed'
   previewUrl: string
 }
 
@@ -103,7 +113,10 @@ export default function AdminPortfolioPage() {
   const [form, setForm] = useState<GalleryForm>(emptyForm)
   const [imageSource, setImageSource] = useState<'upload' | 'url'>('upload')
   const [selectedImages, setSelectedImages] = useState<SelectedPortfolioImage[]>([])
+  const [optimizing, setOptimizing] = useState(false)
+  const [optimizationProgress, setOptimizationProgress] = useState({ completed: 0, total: 0 })
   const [uploadProgress, setUploadProgress] = useState(0)
+  const optimizationBatchRef = useRef(0)
 
   useEffect(() => {
     fetchItems()
@@ -150,6 +163,9 @@ export default function AdminPortfolioPage() {
   }
 
   function clearSelectedImages() {
+    optimizationBatchRef.current += 1
+    setOptimizing(false)
+    setOptimizationProgress({ completed: 0, total: 0 })
     setSelectedImages((current) => {
       current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
       return []
@@ -164,7 +180,7 @@ export default function AdminPortfolioPage() {
     }
   }
 
-  function handleFileSelection(files: FileList | null) {
+  async function handleFileSelection(files: FileList | null) {
     const requestedFiles = Array.from(files || [])
     if (requestedFiles.length === 0) return
 
@@ -192,11 +208,55 @@ export default function AdminPortfolioPage() {
     }
 
     const acceptedFiles = validFiles.slice(0, maxFiles)
+    const batchId = optimizationBatchRef.current + 1
+    optimizationBatchRef.current = batchId
+
     setSelectedImages((current) => {
       current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
-      return acceptedFiles.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))
+      return []
     })
+    setOptimizing(true)
+    setOptimizationProgress({ completed: 0, total: acceptedFiles.length })
     setUploadProgress(0)
+
+    for (let index = 0; index < acceptedFiles.length; index += 1) {
+      const originalFile = acceptedFiles[index]
+      let selectedImage: SelectedPortfolioImage
+
+      try {
+        const result = await optimizePortfolioImage(originalFile)
+        if (optimizationBatchRef.current !== batchId) return
+
+        selectedImage = {
+          file: result.file,
+          originalName: originalFile.name,
+          originalSize: result.originalSize,
+          optimized: result.optimized,
+          optimizationReason: result.reason,
+          previewUrl: URL.createObjectURL(result.file),
+        }
+      } catch (error) {
+        if (optimizationBatchRef.current !== batchId) return
+
+        console.warn(`Unable to optimize ${originalFile.name}:`, error)
+        toast.warning(`${originalFile.name} could not be optimized, so the original will be uploaded.`)
+        selectedImage = {
+          file: originalFile,
+          originalName: originalFile.name,
+          originalSize: originalFile.size,
+          optimized: false,
+          optimizationReason: 'optimization-failed',
+          previewUrl: URL.createObjectURL(originalFile),
+        }
+      }
+
+      setSelectedImages((current) => [...current, selectedImage])
+      setOptimizationProgress({ completed: index + 1, total: acceptedFiles.length })
+    }
+
+    if (optimizationBatchRef.current === batchId) {
+      setOptimizing(false)
+    }
   }
 
   function removeSelectedImage(index: number) {
@@ -273,6 +333,10 @@ export default function AdminPortfolioPage() {
   }
 
   async function saveItem() {
+    if (optimizing) {
+      toast.error('Please wait for image optimization to finish')
+      return
+    }
     if (!form.title.trim()) {
       toast.error('Title is required')
       return
@@ -519,14 +583,22 @@ export default function AdminPortfolioPage() {
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/gif"
                     multiple={!form.id}
-                    disabled={saving}
-                    onChange={(event) => handleFileSelection(event.target.files)}
+                    disabled={saving || optimizing}
+                    onChange={(event) => {
+                      void handleFileSelection(event.target.files)
+                      event.target.value = ''
+                    }}
                   />
                   <p className="text-xs text-muted-foreground">
                     {form.id
-                      ? 'Choose one replacement image. Maximum file size: 35 MB.'
-                      : `Choose up to ${MAX_PORTFOLIO_UPLOAD_FILES} images for the selected session type. Maximum file size: 35 MB each.`}
+                      ? `Choose one replacement image. Photos over ${formatFileSize(PORTFOLIO_COMPRESSION_THRESHOLD_BYTES)} or ${PORTFOLIO_MAX_LONG_EDGE}px are optimized automatically.`
+                      : `Choose up to ${MAX_PORTFOLIO_UPLOAD_FILES} images. Photos over ${formatFileSize(PORTFOLIO_COMPRESSION_THRESHOLD_BYTES)} or ${PORTFOLIO_MAX_LONG_EDGE}px are optimized automatically before upload.`}
                   </p>
+                  {optimizing && (
+                    <p className="text-sm text-primary">
+                      Optimizing image {Math.min(optimizationProgress.completed + 1, optimizationProgress.total)} of {optimizationProgress.total}...
+                    </p>
+                  )}
                   {uploading && (
                     <p className="text-sm text-primary">
                       Uploading image {Math.min(uploadProgress + 1, selectedImages.length)} of {selectedImages.length}...
@@ -550,8 +622,25 @@ export default function AdminPortfolioPage() {
                               <Image src={image.previewUrl} alt={image.file.name} fill unoptimized className="object-cover" sizes="64px" />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">{image.file.name}</p>
-                              <p className="text-xs text-muted-foreground">{formatFileSize(image.file.size)}</p>
+                              <p className="truncate text-sm font-medium">{image.originalName}</p>
+                              {image.optimized ? (
+                                <p className="text-xs text-emerald-600">
+                                  Optimized: {formatFileSize(image.originalSize)} → {formatFileSize(image.file.size)}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  {formatFileSize(image.file.size)}
+                                  {image.optimizationReason === 'animated-gif'
+                                    ? ' · GIF kept original'
+                                    : image.optimizationReason === 'already-optimized'
+                                      ? ' · Already optimized'
+                                      : image.optimizationReason === 'optimization-failed'
+                                        ? ' · Original file used'
+                                        : image.optimizationReason === 'not-smaller'
+                                          ? ' · Original was already smaller'
+                                        : ''}
+                                </p>
+                              )}
                             </div>
                             <Button
                               type="button"
@@ -618,8 +707,10 @@ export default function AdminPortfolioPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => handleDialogOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={saveItem} disabled={saving || uploading}>
-              {saving
+            <Button onClick={saveItem} disabled={saving || uploading || optimizing}>
+              {optimizing
+                ? `Optimizing ${Math.min(optimizationProgress.completed + 1, optimizationProgress.total)} of ${optimizationProgress.total}...`
+                : saving
                 ? uploading
                   ? `Uploading ${Math.min(uploadProgress + 1, selectedImages.length)} of ${selectedImages.length}...`
                   : 'Saving...'
