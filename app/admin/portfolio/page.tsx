@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Edit, Eye, LinkIcon, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import { Edit, Eye, FolderPlus, LinkIcon, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -51,6 +51,20 @@ type GalleryForm = {
   display_order: string
 }
 
+type PortfolioCategory = {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  is_active: boolean
+  sort_order: number | null
+}
+
+type CategoryForm = {
+  name: string
+  description: string
+}
+
 type SelectedPortfolioImage = {
   file: File
   originalName: string
@@ -77,16 +91,10 @@ const emptyForm: GalleryForm = {
   display_order: '0',
 }
 
-const sessionTypes = [
-  { value: 'wedding', label: 'Wedding' },
-  { value: 'portrait', label: 'Portrait' },
-  { value: 'event', label: 'Event' },
-  { value: 'corporate', label: 'Corporate' },
-  { value: 'product', label: 'Product' },
-  { value: 'family', label: 'Family' },
-  { value: 'maternity', label: 'Maternity' },
-  { value: 'newborn', label: 'Newborn' },
-]
+const emptyCategoryForm: CategoryForm = {
+  name: '',
+  description: '',
+}
 
 async function readApiResponse(response: Response) {
   const text = await response.text()
@@ -105,12 +113,17 @@ async function readApiResponse(response: Response) {
 
 export default function AdminPortfolioPage() {
   const [items, setItems] = useState<GalleryItem[]>([])
+  const [categories, setCategories] = useState<PortfolioCategory[]>([])
   const [loading, setLoading] = useState(true)
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [categorySaving, setCategorySaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false)
   const [form, setForm] = useState<GalleryForm>(emptyForm)
+  const [categoryForm, setCategoryForm] = useState<CategoryForm>(emptyCategoryForm)
   const [imageSource, setImageSource] = useState<'upload' | 'url'>('upload')
   const [selectedImages, setSelectedImages] = useState<SelectedPortfolioImage[]>([])
   const [optimizing, setOptimizing] = useState(false)
@@ -119,8 +132,36 @@ export default function AdminPortfolioPage() {
   const optimizationBatchRef = useRef(0)
 
   useEffect(() => {
-    fetchItems()
+    void fetchItems()
+    void fetchCategories()
   }, [])
+
+  async function fetchCategories() {
+    setCategoriesLoading(true)
+    try {
+      const response = await fetch('/api/admin/portfolio-categories', { cache: 'no-store' })
+      const result = await readApiResponse(response)
+      if (!response.ok) throw new Error(result.error || 'Failed to load portfolio categories')
+
+      const loadedCategories = Array.isArray(result.data)
+        ? result.data as PortfolioCategory[]
+        : []
+      setCategories(loadedCategories)
+      setForm((current) => {
+        const activeCategories = loadedCategories.filter((category) => category.is_active)
+        const currentIsAvailable = activeCategories.some(
+          (category) => category.slug === current.session_type,
+        )
+        if (current.id || currentIsAvailable || activeCategories.length === 0) return current
+        return { ...current, session_type: activeCategories[0].slug }
+      })
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Failed to load portfolio categories')
+    } finally {
+      setCategoriesLoading(false)
+    }
+  }
 
   async function fetchItems() {
     setLoading(true)
@@ -139,10 +180,54 @@ export default function AdminPortfolioPage() {
 
   function openCreateDialog() {
     clearSelectedImages()
-    setForm(emptyForm)
+    const activeCategories = categories.filter((category) => category.is_active)
+    const defaultCategory =
+      activeCategories.find((category) => category.slug === 'portrait') || activeCategories[0]
+    setForm({ ...emptyForm, session_type: defaultCategory?.slug || '' })
     setImageSource('upload')
     setUploadProgress(0)
     setDialogOpen(true)
+  }
+
+  function openCategoryDialog() {
+    setCategoryForm(emptyCategoryForm)
+    setCategoryDialogOpen(true)
+  }
+
+  async function saveCategory() {
+    if (!categoryForm.name.trim()) {
+      toast.error('Category name is required')
+      return
+    }
+
+    setCategorySaving(true)
+    try {
+      const response = await fetch('/api/admin/portfolio-categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: categoryForm.name,
+          description: categoryForm.description || null,
+        }),
+      })
+      const result = await readApiResponse(response)
+      if (!response.ok) throw new Error(result.error || 'Failed to create portfolio category')
+
+      const newCategory = result.data as PortfolioCategory
+      setCategories((current) => [...current, newCategory].sort((first, second) => {
+        const orderDifference = Number(first.sort_order || 0) - Number(second.sort_order || 0)
+        return orderDifference || first.name.localeCompare(second.name)
+      }))
+      setForm((current) => ({ ...current, session_type: newCategory.slug }))
+      setCategoryDialogOpen(false)
+      setCategoryForm(emptyCategoryForm)
+      toast.success(`Portfolio category "${newCategory.name}" created`)
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Failed to create portfolio category')
+    } finally {
+      setCategorySaving(false)
+    }
   }
 
   function openEditDialog(item: GalleryItem) {
@@ -337,6 +422,10 @@ export default function AdminPortfolioPage() {
       toast.error('Please wait for image optimization to finish')
       return
     }
+    if (!form.session_type) {
+      toast.error('Portfolio category is required')
+      return
+    }
     if (!form.title.trim()) {
       toast.error('Title is required')
       return
@@ -438,6 +527,11 @@ export default function AdminPortfolioPage() {
     )
   }, [items, search])
 
+  function getCategoryName(slug: string | null) {
+    if (!slug) return 'Portfolio'
+    return categories.find((category) => category.slug === slug)?.name || slug.replace(/-/g, ' ')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -445,10 +539,21 @@ export default function AdminPortfolioPage() {
           <h1 className="font-serif text-3xl font-bold">Portfolio Gallery</h1>
           <p className="text-muted-foreground">Manage public portfolio images shown on the website.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchItems} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              void fetchItems()
+              void fetchCategories()
+            }}
+            disabled={loading || categoriesLoading}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading || categoriesLoading ? 'animate-spin' : ''}`} />
             Refresh
+          </Button>
+          <Button variant="outline" onClick={openCategoryDialog}>
+            <FolderPlus className="mr-2 h-4 w-4" />
+            New Category
           </Button>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 h-4 w-4" />
@@ -483,7 +588,7 @@ export default function AdminPortfolioPage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle className="font-serif text-xl">{item.title}</CardTitle>
-                  <CardDescription className="capitalize">{item.session_type || 'Portfolio'}</CardDescription>
+                  <CardDescription>{getCategoryName(item.session_type)}</CardDescription>
                 </div>
                 <Badge variant="outline">{item.is_public ? 'Public' : 'Hidden'}</Badge>
               </div>
@@ -537,15 +642,30 @@ export default function AdminPortfolioPage() {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label>Session Type</Label>
-                <Select value={form.session_type} onValueChange={(value) => setForm({ ...form, session_type: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Portfolio Category</Label>
+                  <Button type="button" variant="ghost" size="sm" onClick={openCategoryDialog}>
+                    <FolderPlus className="mr-1 h-4 w-4" />
+                    New
+                  </Button>
+                </div>
+                <Select
+                  value={form.session_type}
+                  onValueChange={(value) => setForm({ ...form, session_type: value })}
+                  disabled={categoriesLoading || categories.filter((category) => category.is_active).length === 0}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={categoriesLoading ? 'Loading categories...' : 'Choose a category'} />
+                  </SelectTrigger>
                   <SelectContent>
-                    {sessionTypes.map((type) => (
-                      <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                    {categories.filter((category) => category.is_active).map((category) => (
+                      <SelectItem key={category.id} value={category.slug}>{category.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {!categoriesLoading && categories.filter((category) => category.is_active).length === 0 && (
+                  <p className="text-xs text-destructive">Create a portfolio category before adding images.</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Display Order</Label>
@@ -717,6 +837,57 @@ export default function AdminPortfolioPage() {
                 : !form.id && selectedImages.length > 1
                   ? `Save ${selectedImages.length} Portfolio Images`
                   : 'Save Portfolio Image'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={categoryDialogOpen} onOpenChange={(open) => {
+        if (!categorySaving) setCategoryDialogOpen(open)
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Portfolio Category</DialogTitle>
+            <DialogDescription>
+              Add a new category that can be selected for portfolio images and displayed on the website.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="portfolio-category-name">Category Name</Label>
+              <Input
+                id="portfolio-category-name"
+                value={categoryForm.name}
+                onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })}
+                placeholder="e.g. Graduation"
+                maxLength={80}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="portfolio-category-description">Description (optional)</Label>
+              <Textarea
+                id="portfolio-category-description"
+                value={categoryForm.description}
+                onChange={(event) => setCategoryForm({ ...categoryForm, description: event.target.value })}
+                placeholder="A short description of this photography category"
+                maxLength={500}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCategoryDialogOpen(false)}
+              disabled={categorySaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={saveCategory} disabled={categorySaving}>
+              {categorySaving ? 'Creating...' : 'Create Category'}
             </Button>
           </DialogFooter>
         </DialogContent>

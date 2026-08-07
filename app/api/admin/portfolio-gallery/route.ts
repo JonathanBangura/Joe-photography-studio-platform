@@ -1,22 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdminContext } from '@/lib/admin-auth'
+import { normalizePortfolioCategorySlug } from '@/lib/portfolio-categories'
 import { MAX_PORTFOLIO_UPLOAD_FILES } from '@/lib/storage'
-
-const allowedSessionTypes = new Set([
-  'wedding',
-  'portrait',
-  'event',
-  'corporate',
-  'product',
-  'family',
-  'maternity',
-  'newborn',
-])
-
-function normalizeSessionType(value: unknown) {
-  const sessionType = String(value || '').trim().toLowerCase()
-  return allowedSessionTypes.has(sessionType) ? sessionType : null
-}
 
 function isValidImageUrl(value: string) {
   try {
@@ -75,12 +60,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Every image URL must be a valid HTTP or HTTPS URL.' }, { status: 400 })
     }
 
+    const categorySlug = normalizePortfolioCategorySlug(body.session_type)
+    if (!categorySlug) {
+      return NextResponse.json({ error: 'Choose a valid portfolio category.' }, { status: 400 })
+    }
+
+    const { data: category, error: categoryError } = await context.supabase
+      .from('portfolio_categories')
+      .select('slug')
+      .eq('slug', categorySlug)
+      .eq('is_active', true)
+      .maybeSingle()
+
+    if (categoryError) throw categoryError
+    if (!category) {
+      return NextResponse.json({ error: 'The selected portfolio category does not exist or is inactive.' }, { status: 400 })
+    }
+
     const baseDisplayOrder = Number(body.display_order || 0)
     const payload = imageUrls.map((imageUrl, index) => ({
       title,
       description: body.description ? String(body.description).trim() : null,
       image_url: imageUrl,
-      session_type: normalizeSessionType(body.session_type),
+      session_type: category.slug,
       is_featured: Boolean(body.is_featured),
       is_public: body.is_public !== false,
       display_order: (Number.isFinite(baseDisplayOrder) ? baseDisplayOrder : 0) + index,

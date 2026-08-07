@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { X, ChevronLeft, ChevronRight, ImageIcon } from "lucide-react"
 import Image from "next/image"
+import { portfolioCategoryNameFromSlug } from "@/lib/portfolio-categories"
 
 interface GalleryImage {
   id: string
@@ -16,16 +17,12 @@ interface GalleryImage {
   display_order: number
 }
 
-const categories = [
-  { id: "all", label: "All Work" },
-  { id: "wedding", label: "Weddings" },
-  { id: "portrait", label: "Portraits" },
-  { id: "event", label: "Events" },
-  { id: "corporate", label: "Corporate" },
-  { id: "family", label: "Family" },
-  { id: "maternity", label: "Maternity" },
-  { id: "newborn", label: "Newborn" },
-]
+interface GalleryCategory {
+  id: string
+  name: string
+  slug: string
+  sort_order?: number | null
+}
 
 // Fallback images when database is empty
 const fallbackImages: GalleryImage[] = [
@@ -43,7 +40,13 @@ const fallbackImages: GalleryImage[] = [
   { id: "12", image_url: "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?w=800&q=80", title: "First Dance", session_type: "wedding", is_featured: false, display_order: 11, description: null },
 ]
 
-export function GalleryClient({ initialImages }: { initialImages: GalleryImage[] }) {
+export function GalleryClient({
+  initialImages,
+  initialCategories,
+}: {
+  initialImages: GalleryImage[]
+  initialCategories: GalleryCategory[]
+}) {
   // Use database images if available, otherwise use fallback
   const galleryImages = initialImages.length > 0 ? initialImages : fallbackImages
   
@@ -72,10 +75,29 @@ export function GalleryClient({ initialImages }: { initialImages: GalleryImage[]
 
   const selectedImageData = galleryImages.find(img => img.id === selectedImage)
 
-  // Get available categories based on images
-  const availableCategories = categories.filter(
-    cat => cat.id === "all" || galleryImages.some(img => img.session_type === cat.id)
-  )
+  const categorySource = initialCategories.length > 0
+    ? initialCategories
+    : Array.from(
+        new Set(galleryImages.map((image) => image.session_type).filter(Boolean)),
+      ).map((slug, index) => ({
+        id: String(slug),
+        name: portfolioCategoryNameFromSlug(String(slug)),
+        slug: String(slug),
+        sort_order: index,
+      }))
+
+  const availableCategories = [
+    { id: "all", label: "All Work" },
+    ...categorySource
+      .filter((category) => galleryImages.some((image) => image.session_type === category.slug))
+      .map((category) => ({ id: category.slug, label: category.name })),
+  ]
+
+  const getCategoryName = (slug: string | null) => {
+    if (!slug) return "Photography"
+    return categorySource.find((category) => category.slug === slug)?.name
+      || portfolioCategoryNameFromSlug(slug)
+  }
 
   return (
     <>
@@ -128,7 +150,7 @@ export function GalleryClient({ initialImages }: { initialImages: GalleryImage[]
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                     <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300">
                       <h3 className="text-white font-semibold">{image.title}</h3>
-                      <p className="text-white/70 text-sm capitalize">{image.session_type || "Photography"}</p>
+                      <p className="text-white/70 text-sm">{getCategoryName(image.session_type)}</p>
                     </div>
                   </div>
                 </div>
@@ -176,7 +198,7 @@ export function GalleryClient({ initialImages }: { initialImages: GalleryImage[]
               />
               <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
                 <h3 className="text-white text-xl font-semibold">{selectedImageData.title}</h3>
-                <p className="text-white/70 capitalize">{selectedImageData.session_type || "Photography"}</p>
+                <p className="text-white/70">{getCategoryName(selectedImageData.session_type)}</p>
                 {selectedImageData.description && (
                   <p className="text-white/60 mt-2 text-sm">{selectedImageData.description}</p>
                 )}

@@ -19,13 +19,12 @@ type GalleryItem = {
   created_at?: string | null
 }
 
-const categories = [
-  { id: 'all', label: 'All Work' },
-  { id: 'wedding', label: 'Weddings' },
-  { id: 'portrait', label: 'Portraits' },
-  { id: 'event', label: 'Events' },
-  { id: 'corporate', label: 'Corporate' },
-]
+type PortfolioCategory = {
+  id: string
+  name: string
+  slug: string
+  sort_order?: number | null
+}
 
 function getAspect(index: number) {
   if (index === 0 || index === 2) return 'portrait'
@@ -36,6 +35,7 @@ function getAspect(index: number) {
 export function GallerySection() {
   const [activeCategory, setActiveCategory] = useState('all')
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([])
+  const [portfolioCategories, setPortfolioCategories] = useState<PortfolioCategory[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -46,6 +46,7 @@ export function GallerySection() {
 
         if (response.ok) {
           setGalleryItems(result.data || [])
+          setPortfolioCategories(result.categories || [])
         }
       } catch (error) {
         console.error('Failed to load public gallery section:', error)
@@ -62,6 +63,18 @@ export function GallerySection() {
     return galleryItems.filter((item) => item.session_type === activeCategory)
   }, [activeCategory, galleryItems])
 
+  const availableCategories = useMemo(() => {
+    const representedCategories = new Set(
+      galleryItems.map((item) => item.session_type).filter(Boolean),
+    )
+    return [
+      { id: 'all', label: 'All Work' },
+      ...portfolioCategories
+        .filter((category) => representedCategories.has(category.slug))
+        .map((category) => ({ id: category.slug, label: category.name })),
+    ]
+  }, [galleryItems, portfolioCategories])
+
   return (
     <section className="py-24 bg-card">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -77,7 +90,7 @@ export function GallerySection() {
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2 mb-12">
-          {categories.map((category) => (
+          {availableCategories.map((category) => (
             <button
               key={category.id}
               onClick={() => setActiveCategory(category.id)}
@@ -134,7 +147,7 @@ export function GallerySection() {
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                     <div className="absolute inset-x-0 bottom-0 p-6 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300">
                       <span className="text-xs font-medium text-primary uppercase tracking-wider">
-                        {item.session_type || 'Portfolio'}
+                        {portfolioCategories.find((category) => category.slug === item.session_type)?.name || item.session_type || 'Portfolio'}
                       </span>
                       <h3 className="text-lg font-serif font-semibold text-white mt-1">
                         {item.title}

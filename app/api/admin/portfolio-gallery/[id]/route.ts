@@ -1,25 +1,10 @@
 import { NextResponse } from 'next/server'
 import { requireAdminContext } from '@/lib/admin-auth'
+import { normalizePortfolioCategorySlug } from '@/lib/portfolio-categories'
 import { GALLERY_IMAGES_BUCKET, getStoragePathFromPublicUrl } from '@/lib/storage'
 
 type Params = {
   params: Promise<{ id: string }>
-}
-
-const allowedSessionTypes = new Set([
-  'wedding',
-  'portrait',
-  'event',
-  'corporate',
-  'product',
-  'family',
-  'maternity',
-  'newborn',
-])
-
-function normalizeSessionType(value: unknown) {
-  const sessionType = String(value || '').trim().toLowerCase()
-  return allowedSessionTypes.has(sessionType) ? sessionType : null
 }
 
 function isValidImageUrl(value: string) {
@@ -60,7 +45,25 @@ export async function PATCH(request: Request, { params }: Params) {
       }
       payload.image_url = imageUrl
     }
-    if ('session_type' in body) payload.session_type = normalizeSessionType(body.session_type)
+    if ('session_type' in body) {
+      const categorySlug = normalizePortfolioCategorySlug(body.session_type)
+      if (!categorySlug) {
+        return NextResponse.json({ error: 'Choose a valid portfolio category.' }, { status: 400 })
+      }
+
+      const { data: category, error: categoryError } = await context.supabase
+        .from('portfolio_categories')
+        .select('slug')
+        .eq('slug', categorySlug)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (categoryError) throw categoryError
+      if (!category) {
+        return NextResponse.json({ error: 'The selected portfolio category does not exist or is inactive.' }, { status: 400 })
+      }
+      payload.session_type = category.slug
+    }
     if ('is_featured' in body) payload.is_featured = Boolean(body.is_featured)
     if ('is_public' in body) payload.is_public = Boolean(body.is_public)
     if ('display_order' in body) payload.display_order = Number(body.display_order || 0)
