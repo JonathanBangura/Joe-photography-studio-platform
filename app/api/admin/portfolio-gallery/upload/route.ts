@@ -114,9 +114,9 @@ export async function DELETE(request: Request) {
     const body = await request.json();
     const paths = Array.isArray(body.paths)
       ? body.paths
-          .map((path: unknown) => String(path || "").trim())
-          .filter((path: string) => path.startsWith(`${PORTFOLIO_IMAGES_FOLDER}/`))
-          .slice(0, MAX_PORTFOLIO_UPLOAD_FILES)
+        .map((path: unknown) => String(path || "").trim())
+        .filter((path: string) => path.startsWith(`${PORTFOLIO_IMAGES_FOLDER}/`))
+        .slice(0, MAX_PORTFOLIO_UPLOAD_FILES)
       : [];
 
     if (paths.length === 0) {
