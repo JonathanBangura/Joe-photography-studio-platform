@@ -2,29 +2,55 @@ import { createClient } from "@/lib/supabase/server"
 import { Navbar } from "@/components/public/navbar"
 import { Footer } from "@/components/public/footer"
 import { GalleryClient } from "./gallery-client"
+import { portfolioCategoryNameFromSlug } from "@/lib/portfolio-categories"
 
 export const revalidate = 3600 // Revalidate every hour
 
-async function getGalleryImages() {
+async function getGalleryData() {
   const supabase = await createClient()
-  
-  const { data, error } = await supabase
-    .from("gallery")
-    .select("*")
-    .eq("is_public", true)
-    .order("display_order", { ascending: true })
-    .order("created_at", { ascending: false })
 
-  if (error) {
-    console.error("Error fetching gallery:", error)
-    return []
+  const [galleryResult, categoryResult] = await Promise.all([
+    supabase
+      .from("gallery")
+      .select("*")
+      .eq("is_public", true)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("portfolio_categories")
+      .select("id,name,slug,sort_order")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+  ])
+
+  if (galleryResult.error) {
+    console.error("Error fetching gallery:", galleryResult.error)
+    return { images: [], categories: [] }
   }
 
-  return data || []
+  if (categoryResult.error) {
+    console.warn("Portfolio categories unavailable:", categoryResult.error.message)
+  }
+
+  const images = galleryResult.data || []
+  const fallbackCategories = Array.from(
+    new Set(images.map((image) => String(image.session_type || '')).filter(Boolean)),
+  ).map((slug, index) => ({
+    id: slug,
+    name: portfolioCategoryNameFromSlug(slug),
+    slug,
+    sort_order: index,
+  }))
+
+  return {
+    images,
+    categories: categoryResult.data || fallbackCategories,
+  }
 }
 
 export default async function GalleryPage() {
-  const images = await getGalleryImages()
+  const { images, categories } = await getGalleryData()
 
   return (
     <div className="min-h-screen bg-background">
@@ -45,7 +71,7 @@ export default async function GalleryPage() {
           </div>
         </section>
 
-        <GalleryClient initialImages={images} />
+        <GalleryClient initialImages={images} initialCategories={categories} />
       </main>
 
       <Footer />
