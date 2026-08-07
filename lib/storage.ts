@@ -1,7 +1,10 @@
 export const GALLERY_IMAGES_BUCKET = "gallery-images";
+export const PORTFOLIO_IMAGES_FOLDER = "portfolio";
+export const MAX_PORTFOLIO_UPLOAD_FILES = 20;
 
 const ALLOWED_IMAGE_TYPES = [
   "image/jpeg",
+  "image/jpg",
   "image/png",
   "image/webp",
   "image/gif",
@@ -9,7 +12,11 @@ const ALLOWED_IMAGE_TYPES = [
 export const MAX_GALLERY_IMAGE_SIZE_BYTES = 35 * 1024 * 1024;
 
 export function isAllowedGalleryImage(file: File) {
-  return ALLOWED_IMAGE_TYPES.includes(file.type);
+  return isAllowedGalleryImageType(file.type);
+}
+
+export function isAllowedGalleryImageType(type: string) {
+  return ALLOWED_IMAGE_TYPES.includes(type);
 }
 
 export function isGalleryImageTooLarge(file: File) {
@@ -17,7 +24,9 @@ export function isGalleryImageTooLarge(file: File) {
 }
 
 export function sanitizeFileName(fileName: string) {
-  const extension = fileName.includes(".") ? fileName.split(".").pop() : "jpg";
+  const extension = (fileName.includes(".") ? fileName.split(".").pop() : "jpg")
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, "") || "jpg";
   const baseName = fileName
     .replace(/\.[^/.]+$/, "")
     .toLowerCase()
@@ -36,6 +45,16 @@ export function buildGalleryStoragePath(galleryId: string, fileName: string) {
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return `${galleryId}/${uniqueId}-${safeName}`;
+}
+
+export function buildPortfolioStoragePath(fileName: string) {
+  const safeName = sanitizeFileName(fileName);
+  const uniqueId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `${PORTFOLIO_IMAGES_FOLDER}/${uniqueId}-${safeName}`;
 }
 
 export function getStoragePathFromPublicUrl(
