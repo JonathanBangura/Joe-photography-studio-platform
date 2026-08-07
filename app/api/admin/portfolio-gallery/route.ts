@@ -1,143 +1,113 @@
-import { NextResponse } from "next/server";
-import { requireAdminContext } from "@/lib/admin-auth";
-import {
-  buildPortfolioStoragePath,
-  GALLERY_IMAGES_BUCKET,
-  isAllowedGalleryImageType,
-  MAX_GALLERY_IMAGE_SIZE_BYTES,
-  MAX_PORTFOLIO_UPLOAD_FILES,
-  PORTFOLIO_IMAGES_FOLDER,
-} from "@/lib/storage";
+import { NextResponse } from 'next/server'
+import { requireAdminContext } from '@/lib/admin-auth'
+import { MAX_PORTFOLIO_UPLOAD_FILES } from '@/lib/storage'
 
-type UploadRequestFile = {
-  name?: unknown;
-  size?: unknown;
-  type?: unknown;
-};
+const allowedSessionTypes = new Set([
+  'wedding',
+  'portrait',
+  'event',
+  'corporate',
+  'product',
+  'family',
+  'maternity',
+  'newborn',
+])
 
-function parseUploadFile(value: unknown) {
-  const file = value && typeof value === "object" ? value as UploadRequestFile : {};
-  const name = String(file.name || "").trim();
-  const type = String(file.type || "").trim().toLowerCase();
-  const size = Number(file.size);
+function normalizeSessionType(value: unknown) {
+  const sessionType = String(value || '').trim().toLowerCase()
+  return allowedSessionTypes.has(sessionType) ? sessionType : null
+}
 
-  if (!name) throw new Error("Every image must have a file name.");
-  if (!isAllowedGalleryImageType(type)) {
-    throw new Error(`${name} is not a supported image type.`);
+function isValidImageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'https:' || url.protocol === 'http:') && value.length <= 2048
+  } catch {
+    return false
   }
-  if (!Number.isFinite(size) || size <= 0) {
-    throw new Error(`${name} is empty or has an invalid size.`);
-  }
-  if (size > MAX_GALLERY_IMAGE_SIZE_BYTES) {
-    throw new Error(`${name} is too large. Maximum size is 35 MB.`);
-  }
+}
 
-  return { name, size, type };
+export async function GET() {
+  try {
+    const context = await requireAdminContext()
+    if ('error' in context) return context.error
+
+    const { data, error } = await context.supabase
+      .from('gallery')
+      .select('*')
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+
+    return NextResponse.json({ success: true, data: data || [] })
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, error: error instanceof Error ? error.message : 'Failed to load portfolio gallery' },
+      { status: 500 },
+    )
+  }
 }
 
 export async function POST(request: Request) {
   try {
-    const context = await requireAdminContext();
-    if ("error" in context) return context.error;
+    const context = await requireAdminContext()
+    if ('error' in context) return context.error
 
-    const body = await request.json();
-    const requestedFiles = Array.isArray(body.files) ? body.files : [];
+    const body = await request.json()
 
-    if (requestedFiles.length === 0) {
-      return NextResponse.json({ error: "Choose at least one image." }, { status: 400 });
+    const title = String(body.title || '').trim()
+    const rawImageUrls = Array.isArray(body.image_urls) ? body.image_urls : [body.image_url]
+    const imageUrls = Array.from(
+      new Set<string>(rawImageUrls.map((value: unknown) => String(value || '').trim()).filter(Boolean)),
+    )
+
+    if (!title || imageUrls.length === 0) {
+      return NextResponse.json({ error: 'Title and at least one image are required.' }, { status: 400 })
     }
-    if (requestedFiles.length > MAX_PORTFOLIO_UPLOAD_FILES) {
+    if (imageUrls.length > MAX_PORTFOLIO_UPLOAD_FILES) {
       return NextResponse.json(
-        { error: `You can upload up to ${MAX_PORTFOLIO_UPLOAD_FILES} images at once.` },
+        { error: `You can add up to ${MAX_PORTFOLIO_UPLOAD_FILES} images at once.` },
         { status: 400 },
-      );
+      )
+    }
+    if (imageUrls.some((imageUrl) => !isValidImageUrl(imageUrl))) {
+      return NextResponse.json({ error: 'Every image URL must be a valid HTTP or HTTPS URL.' }, { status: 400 })
     }
 
-    const files = requestedFiles.map((file: unknown) => parseUploadFile(file));
-    const uploads = [];
+    const baseDisplayOrder = Number(body.display_order || 0)
+    const payload = imageUrls.map((imageUrl, index) => ({
+      title,
+      description: body.description ? String(body.description).trim() : null,
+      image_url: imageUrl,
+      session_type: normalizeSessionType(body.session_type),
+      is_featured: Boolean(body.is_featured),
+      is_public: body.is_public !== false,
+      display_order: (Number.isFinite(baseDisplayOrder) ? baseDisplayOrder : 0) + index,
+    }))
 
-    for (const file of files) {
-      const path = buildPortfolioStoragePath(file.name);
-      const { data, error } = await context.supabase.storage
-        .from(GALLERY_IMAGES_BUCKET)
-        .createSignedUploadUrl(path);
+    const { data, error } = await context.supabase
+      .from('gallery')
+      .insert(payload)
+      .select('*')
 
-      if (error) throw new Error(`${file.name}: ${error.message}`);
-      if (!data?.token) throw new Error(`${file.name}: Supabase did not return an upload token.`);
+    if (error) throw error
 
-      const { data: publicUrlData } = context.supabase.storage
-        .from(GALLERY_IMAGES_BUCKET)
-        .getPublicUrl(path);
-
-      uploads.push({
-        name: file.name,
-        path,
-        token: data.token,
-        url: publicUrlData.publicUrl,
-      });
-    }
-
-    await context.supabase.from("audit_logs").insert({
+    await context.supabase.from('audit_logs').insert({
       user_id: context.user.id,
-      action: "create_portfolio_upload_tokens",
-      resource_type: "gallery",
-      new_data: {
-        bucket: GALLERY_IMAGES_BUCKET,
-        folder: PORTFOLIO_IMAGES_FOLDER,
-        files,
-      },
-      ip_address: request.headers.get("x-forwarded-for"),
-      user_agent: request.headers.get("user-agent"),
-    });
+      action: 'create_portfolio_gallery_item',
+      resource_type: 'gallery',
+      resource_id: data?.[0]?.id || null,
+      new_data: { count: data?.length || 0, items: data || [] },
+      ip_address: request.headers.get('x-forwarded-for'),
+      user_agent: request.headers.get('user-agent'),
+    })
 
-    return NextResponse.json(
-      { success: true, uploads },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ success: true, data: data || [] })
   } catch (error) {
-    console.error("Portfolio signed upload error:", error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to prepare portfolio upload.",
-      },
+      { success: false, error: error instanceof Error ? error.message : 'Failed to create portfolio item' },
       { status: 500 },
-    );
-  }
-}
-
-export async function DELETE(request: Request) {
-  try {
-    const context = await requireAdminContext();
-    if ("error" in context) return context.error;
-
-    const body = await request.json();
-    const paths = Array.isArray(body.paths)
-      ? body.paths
-          .map((path: unknown) => String(path || "").trim())
-          .filter((path: string) => path.startsWith(`${PORTFOLIO_IMAGES_FOLDER}/`))
-          .slice(0, MAX_PORTFOLIO_UPLOAD_FILES)
-      : [];
-
-    if (paths.length === 0) {
-      return NextResponse.json({ success: true });
-    }
-
-    const { error } = await context.supabase.storage
-      .from(GALLERY_IMAGES_BUCKET)
-      .remove(paths);
-
-    if (error) throw error;
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Portfolio upload cleanup error:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to clean up portfolio uploads.",
-      },
-      { status: 500 },
-    );
+    )
   }
 }
