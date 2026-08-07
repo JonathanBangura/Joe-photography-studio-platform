@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminContext } from '@/lib/admin-auth'
+import { GALLERY_IMAGES_BUCKET, getStoragePathFromPublicUrl } from '@/lib/storage'
 
 type Params = {
   params: Promise<{ id: string }>
@@ -21,13 +22,24 @@ function normalizeSessionType(value: unknown) {
   return allowedSessionTypes.has(sessionType) ? sessionType : null
 }
 
+function isValidImageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'https:' || url.protocol === 'http:') && value.length <= 2048
+  } catch {
+    return false
+  }
+}
+
 export async function PATCH(request: Request, { params }: Params) {
   try {
+    const context = await requireAdminContext()
+    if ('error' in context) return context.error
+
     const { id } = await params
     const body = await request.json()
-    const supabase = createAdminClient()
 
-    const { data: oldData } = await supabase
+    const { data: oldData } = await context.supabase
       .from('gallery')
       .select('*')
       .eq('id', id)
@@ -35,15 +47,29 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const payload: Record<string, unknown> = {}
 
-    if ('title' in body) payload.title = String(body.title || '').trim()
+    if ('title' in body) {
+      const title = String(body.title || '').trim()
+      if (!title) return NextResponse.json({ error: 'Title is required.' }, { status: 400 })
+      payload.title = title
+    }
     if ('description' in body) payload.description = body.description ? String(body.description).trim() : null
-    if ('image_url' in body) payload.image_url = String(body.image_url || '').trim()
+    if ('image_url' in body) {
+      const imageUrl = String(body.image_url || '').trim()
+      if (!isValidImageUrl(imageUrl)) {
+        return NextResponse.json({ error: 'Image URL must be a valid HTTP or HTTPS URL.' }, { status: 400 })
+      }
+      payload.image_url = imageUrl
+    }
     if ('session_type' in body) payload.session_type = normalizeSessionType(body.session_type)
     if ('is_featured' in body) payload.is_featured = Boolean(body.is_featured)
     if ('is_public' in body) payload.is_public = Boolean(body.is_public)
     if ('display_order' in body) payload.display_order = Number(body.display_order || 0)
 
-    const { data, error } = await supabase
+    if (Object.keys(payload).length === 0) {
+      return NextResponse.json({ error: 'No portfolio fields were provided.' }, { status: 400 })
+    }
+
+    const { data, error } = await context.supabase
       .from('gallery')
       .update(payload)
       .eq('id', id)
@@ -52,7 +78,19 @@ export async function PATCH(request: Request, { params }: Params) {
 
     if (error) throw error
 
-    await supabase.from('audit_logs').insert({
+    if (oldData?.image_url && data.image_url !== oldData.image_url) {
+      const oldStoragePath = getStoragePathFromPublicUrl(oldData.image_url)
+      if (oldStoragePath) {
+        const { error: storageError } = await context.supabase.storage
+          .from(GALLERY_IMAGES_BUCKET)
+          .remove([oldStoragePath])
+
+        if (storageError) console.warn('Portfolio image cleanup warning:', storageError.message)
+      }
+    }
+
+    await context.supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: 'update_portfolio_gallery_item',
       resource_type: 'gallery',
       resource_id: id,
@@ -73,23 +111,35 @@ export async function PATCH(request: Request, { params }: Params) {
 
 export async function DELETE(request: Request, { params }: Params) {
   try {
-    const { id } = await params
-    const supabase = createAdminClient()
+    const context = await requireAdminContext()
+    if ('error' in context) return context.error
 
-    const { data: oldData } = await supabase
+    const { id } = await params
+
+    const { data: oldData } = await context.supabase
       .from('gallery')
       .select('*')
       .eq('id', id)
       .single()
 
-    const { error } = await supabase
+    const { error } = await context.supabase
       .from('gallery')
       .delete()
       .eq('id', id)
 
     if (error) throw error
 
-    await supabase.from('audit_logs').insert({
+    const storagePath = oldData?.image_url ? getStoragePathFromPublicUrl(oldData.image_url) : null
+    if (storagePath) {
+      const { error: storageError } = await context.supabase.storage
+        .from(GALLERY_IMAGES_BUCKET)
+        .remove([storagePath])
+
+      if (storageError) console.warn('Portfolio image delete warning:', storageError.message)
+    }
+
+    await context.supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: 'delete_portfolio_gallery_item',
       resource_type: 'gallery',
       resource_id: id,
