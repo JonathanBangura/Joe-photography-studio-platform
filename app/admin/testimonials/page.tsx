@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Search, RefreshCw, Star, CheckCircle, XCircle, Trash2, Eye, MessageSquareQuote, Plus } from 'lucide-react'
+import { Search, RefreshCw, Star, CheckCircle, XCircle, Trash2, Eye, MessageSquareQuote, Plus, Upload, X, ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,6 +12,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+import { createClient } from '@/lib/supabase/client'
+import { optimizeTestimonialImage } from '@/lib/testimonial-image-compression'
+import {
+  formatFileSize,
+  GALLERY_IMAGES_BUCKET,
+  isAllowedGalleryImageType,
+  isGalleryImageTooLarge,
+} from '@/lib/storage'
 
 type Testimonial = {
   id: string
@@ -19,6 +27,7 @@ type Testimonial = {
   client_name: string
   content: string
   rating: number | null
+  photo_url: string | null
   session_type: string | null
   is_approved: boolean
   is_featured: boolean
@@ -32,6 +41,19 @@ type Testimonial = {
       email?: string | null
     } | null
   } | null
+}
+
+type SelectedTestimonialImage = {
+  file: File
+  previewUrl: string
+  originalSize: number
+  optimized: boolean
+}
+
+type TestimonialUploadSlot = {
+  path: string
+  token: string
+  url: string
 }
 
 const statusStyles: Record<string, string> = {
@@ -64,6 +86,10 @@ export default function AdminTestimonialsPage() {
   const [viewOpen, setViewOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [editContent, setEditContent] = useState('')
+  const [addImage, setAddImage] = useState<SelectedTestimonialImage | null>(null)
+  const [editImage, setEditImage] = useState<SelectedTestimonialImage | null>(null)
+  const [removeExistingPhoto, setRemoveExistingPhoto] = useState(false)
+  const [optimizingImage, setOptimizingImage] = useState(false)
   const [newTestimonial, setNewTestimonial] = useState({
     client_name: '',
     content: '',
@@ -96,9 +122,116 @@ export default function AdminTestimonialsPage() {
   }
 
   function openView(testimonial: Testimonial) {
+    setEditImage((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl)
+      return null
+    })
     setSelectedTestimonial(testimonial)
     setEditContent(testimonial.content)
+    setRemoveExistingPhoto(false)
     setViewOpen(true)
+  }
+
+  function clearSelectedImage(target: 'add' | 'edit') {
+    const setter = target === 'add' ? setAddImage : setEditImage
+    setter((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl)
+      return null
+    })
+  }
+
+  function openAddDialog() {
+    clearSelectedImage('add')
+    setAddOpen(true)
+  }
+
+  function handleAddDialogOpenChange(open: boolean) {
+    if (!open) clearSelectedImage('add')
+    setAddOpen(open)
+  }
+
+  function handleViewDialogOpenChange(open: boolean) {
+    if (!open) {
+      clearSelectedImage('edit')
+      setRemoveExistingPhoto(false)
+    }
+    setViewOpen(open)
+  }
+
+  async function chooseTestimonialImage(file: File | undefined, target: 'add' | 'edit') {
+    if (!file) return
+    if (!isAllowedGalleryImageType(file.type) || file.type === 'image/gif') {
+      toast.error('Use a JPEG, PNG, or WebP image')
+      return
+    }
+    if (isGalleryImageTooLarge(file)) {
+      toast.error('The image is too large. Maximum size is 35 MB')
+      return
+    }
+
+    setOptimizingImage(true)
+    try {
+      const result = await optimizeTestimonialImage(file)
+      const selected: SelectedTestimonialImage = {
+        file: result.file,
+        previewUrl: URL.createObjectURL(result.file),
+        originalSize: result.originalSize,
+        optimized: result.optimized,
+      }
+      const setter = target === 'add' ? setAddImage : setEditImage
+      setter((current) => {
+        if (current) URL.revokeObjectURL(current.previewUrl)
+        return selected
+      })
+      if (target === 'edit') setRemoveExistingPhoto(false)
+      if (result.optimized) {
+        toast.success(`Image optimized: ${formatFileSize(result.originalSize)} → ${formatFileSize(result.file.size)}`)
+      }
+    } catch (error) {
+      console.error('Testimonial image optimization error:', error)
+      toast.error(error instanceof Error ? error.message : 'Unable to optimize this image')
+    } finally {
+      setOptimizingImage(false)
+    }
+  }
+
+  async function cleanupTestimonialUpload(path: string | undefined) {
+    if (!path) return
+    try {
+      await fetch('/api/admin/testimonials/upload', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+    } catch (error) {
+      console.warn('Unable to clean up incomplete testimonial upload:', error)
+    }
+  }
+
+  async function uploadTestimonialImage(file: File): Promise<TestimonialUploadSlot> {
+    const response = await fetch('/api/admin/testimonials/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: { name: file.name, size: file.size, type: file.type } }),
+    })
+    const result = await response.json().catch(() => ({ error: response.statusText }))
+    if (!response.ok) throw new Error(result.error || 'Unable to prepare testimonial image upload')
+
+    const upload = result.upload as TestimonialUploadSlot | undefined
+    if (!upload?.path || !upload.token || !upload.url) {
+      throw new Error('The server did not prepare the testimonial image upload.')
+    }
+
+    const supabase = createClient()
+    const { error } = await supabase.storage
+      .from(GALLERY_IMAGES_BUCKET)
+      .uploadToSignedUrl(upload.path, upload.token, file, {
+        cacheControl: '31536000',
+        contentType: file.type,
+      })
+
+    if (error) throw new Error(error.message)
+    return upload
   }
 
   async function updateTestimonial(id: string, payload: Partial<Testimonial>) {
@@ -124,9 +257,11 @@ export default function AdminTestimonialsPage() {
       }
 
       toast.success('Testimonial updated')
+      return result.testimonial as Testimonial
     } catch (error) {
       console.error('Update testimonial error:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to update testimonial')
+      return null
     } finally {
       setSaving(false)
     }
@@ -162,13 +297,20 @@ export default function AdminTestimonialsPage() {
       toast.error('Client name and testimonial content are required')
       return
     }
+    if (optimizingImage) {
+      toast.error('Please wait for image optimization to finish')
+      return
+    }
 
     setSaving(true)
+    let upload: TestimonialUploadSlot | null = null
     try {
+      if (addImage) upload = await uploadTestimonialImage(addImage.file)
+
       const response = await fetch('/api/admin/testimonials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newTestimonial),
+        body: JSON.stringify({ ...newTestimonial, photo_url: upload?.url || null }),
       })
       const result = await response.json().catch(() => ({ error: response.statusText }))
 
@@ -184,11 +326,46 @@ export default function AdminTestimonialsPage() {
         is_approved: true,
         is_featured: false,
       })
+      clearSelectedImage('add')
       setAddOpen(false)
       toast.success('Testimonial added')
     } catch (error) {
+      await cleanupTestimonialUpload(upload?.path)
       console.error('Create testimonial error:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to create testimonial')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveTestimonialDetails() {
+    if (!selectedTestimonial) return
+    if (optimizingImage) {
+      toast.error('Please wait for image optimization to finish')
+      return
+    }
+
+    setSaving(true)
+    let upload: TestimonialUploadSlot | null = null
+    try {
+      if (editImage) upload = await uploadTestimonialImage(editImage.file)
+
+      const updated = await updateTestimonial(selectedTestimonial.id, {
+        content: editContent,
+        photo_url: upload?.url || (removeExistingPhoto ? null : selectedTestimonial.photo_url),
+      })
+
+      if (!updated) {
+        await cleanupTestimonialUpload(upload?.path)
+        return
+      }
+
+      clearSelectedImage('edit')
+      setRemoveExistingPhoto(false)
+    } catch (error) {
+      await cleanupTestimonialUpload(upload?.path)
+      console.error('Save testimonial details error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to save testimonial details')
     } finally {
       setSaving(false)
     }
@@ -251,7 +428,7 @@ export default function AdminTestimonialsPage() {
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button onClick={() => setAddOpen(true)}>
+          <Button onClick={openAddDialog}>
             <Plus className="mr-2 h-4 w-4" />
             Add Testimonial
           </Button>
@@ -314,9 +491,19 @@ export default function AdminTestimonialsPage() {
                 {filteredTestimonials.map((testimonial) => (
                   <TableRow key={testimonial.id}>
                     <TableCell>
-                      <div>
-                        <p className="font-medium">{testimonial.client_name}</p>
-                        <p className="text-xs text-muted-foreground">{testimonial.session_type || 'Client'}</p>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                          {testimonial.photo_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={testimonial.photo_url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            testimonial.client_name.charAt(0).toUpperCase()
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium">{testimonial.client_name}</p>
+                          <p className="text-xs text-muted-foreground">{testimonial.session_type || 'Client'}</p>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell><div className="flex items-center gap-1">{renderStars(testimonial.rating)}</div></TableCell>
@@ -369,7 +556,7 @@ export default function AdminTestimonialsPage() {
                         <div className="space-y-4">
                           <p>No testimonials found</p>
                           <div className="flex flex-wrap justify-center gap-2">
-                            <Button size="sm" onClick={() => setAddOpen(true)}>
+                            <Button size="sm" onClick={openAddDialog}>
                               <Plus className="mr-2 h-4 w-4" />
                               Add Testimonial
                             </Button>
@@ -390,7 +577,7 @@ export default function AdminTestimonialsPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+      <Dialog open={addOpen} onOpenChange={handleAddDialogOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add Testimonial</DialogTitle>
@@ -430,6 +617,48 @@ export default function AdminTestimonialsPage() {
                 rows={6}
               />
             </div>
+            <div className="space-y-2">
+              <Label>Client Photo</Label>
+              <div className="rounded-lg border p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-primary">
+                    {addImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={addImage.previewUrl} alt="New testimonial preview" className="h-full w-full object-cover" />
+                    ) : (
+                      <ImageIcon className="h-7 w-7" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={optimizingImage || saving}
+                      onChange={(event) => {
+                        void chooseTestimonialImage(event.target.files?.[0], 'add')
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      JPEG, PNG, or WebP. The browser shrinks it to a fast-loading avatar before upload.
+                    </p>
+                    {addImage && (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span>{addImage.file.name}</span>
+                        <span className="text-muted-foreground">
+                          {addImage.optimized
+                            ? `${formatFileSize(addImage.originalSize)} → ${formatFileSize(addImage.file.size)}`
+                            : formatFileSize(addImage.file.size)}
+                        </span>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => clearSelectedImage('add')}>
+                          <X className="mr-1 h-3.5 w-3.5" /> Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -448,15 +677,15 @@ export default function AdminTestimonialsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={createTestimonial} disabled={saving}>
-              {saving ? 'Saving...' : 'Add Testimonial'}
+            <Button variant="outline" onClick={() => handleAddDialogOpenChange(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={createTestimonial} disabled={saving || optimizingImage}>
+              {optimizingImage ? 'Optimizing image...' : saving ? 'Saving...' : 'Add Testimonial'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+      <Dialog open={viewOpen} onOpenChange={handleViewDialogOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Testimonial Details</DialogTitle>
@@ -465,13 +694,69 @@ export default function AdminTestimonialsPage() {
           {selectedTestimonial && (
             <div className="space-y-4">
               <div className="rounded-lg border p-4">
-                <div className="mb-2 flex items-center gap-1">{renderStars(selectedTestimonial.rating)}</div>
-                <p className="font-medium">{selectedTestimonial.client_name}</p>
-                <p className="text-sm text-muted-foreground">{selectedTestimonial.session_type || 'Client'} • {formatDate(selectedTestimonial.created_at)}</p>
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-lg font-semibold text-primary">
+                    {editImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={editImage.previewUrl} alt="Replacement testimonial preview" className="h-full w-full object-cover" />
+                    ) : selectedTestimonial.photo_url && !removeExistingPhoto ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={selectedTestimonial.photo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      selectedTestimonial.client_name.charAt(0).toUpperCase()
+                    )}
+                  </div>
+                  <div>
+                    <div className="mb-2 flex items-center gap-1">{renderStars(selectedTestimonial.rating)}</div>
+                    <p className="font-medium">{selectedTestimonial.client_name}</p>
+                    <p className="text-sm text-muted-foreground">{selectedTestimonial.session_type || 'Client'} • {formatDate(selectedTestimonial.created_at)}</p>
+                  </div>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Content</Label>
                 <Textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={6} />
+              </div>
+              <div className="space-y-2">
+                <Label>Client Photo</Label>
+                <div className="rounded-lg border p-4">
+                  <div className="space-y-3">
+                    <Input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={optimizingImage || saving}
+                      onChange={(event) => {
+                        void chooseTestimonialImage(event.target.files?.[0], 'edit')
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">Choose one image to add or replace the current client photo.</p>
+                    {editImage && (
+                      <p className="text-xs text-muted-foreground">
+                        Ready: {editImage.optimized
+                          ? `${formatFileSize(editImage.originalSize)} → ${formatFileSize(editImage.file.size)}`
+                          : formatFileSize(editImage.file.size)}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {editImage && (
+                        <Button type="button" size="sm" variant="outline" onClick={() => clearSelectedImage('edit')}>
+                          <X className="mr-1 h-3.5 w-3.5" /> Cancel Replacement
+                        </Button>
+                      )}
+                      {selectedTestimonial.photo_url && !editImage && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setRemoveExistingPhoto((current) => !current)}
+                        >
+                          {removeExistingPhoto ? 'Keep Current Photo' : 'Remove Current Photo'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Badge variant="outline" className={selectedTestimonial.is_approved ? statusStyles.approved : statusStyles.pending}>
@@ -484,8 +769,9 @@ export default function AdminTestimonialsPage() {
           <DialogFooter className="gap-2">
             {selectedTestimonial && (
               <>
-                <Button variant="outline" onClick={() => updateTestimonial(selectedTestimonial.id, { content: editContent })} disabled={saving}>
-                  Save Text
+                <Button variant="outline" onClick={saveTestimonialDetails} disabled={saving || optimizingImage}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  {optimizingImage ? 'Optimizing...' : saving ? 'Saving...' : 'Save Changes'}
                 </Button>
                 <Button variant="outline" onClick={() => updateTestimonial(selectedTestimonial.id, { is_approved: !selectedTestimonial.is_approved })} disabled={saving}>
                   {selectedTestimonial.is_approved ? 'Unapprove' : 'Approve'}

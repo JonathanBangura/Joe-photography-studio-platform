@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAdminContext } from '@/lib/admin-auth'
+import { GALLERY_IMAGES_BUCKET, getStoragePathFromPublicUrl } from '@/lib/storage'
 
 type RouteContext = {
   params: Promise<{ id: string }>
@@ -29,6 +30,13 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (typeof body.client_name === 'string') payload.client_name = body.client_name.trim()
     if (body.rating !== undefined) payload.rating = Math.min(Math.max(Number(body.rating), 1), 5)
     if (body.session_type !== undefined) payload.session_type = body.session_type || null
+    if ('photo_url' in body) {
+      const photoUrl = String(body.photo_url || '').trim()
+      if (photoUrl && !/^https?:\/\//i.test(photoUrl)) {
+        return NextResponse.json({ error: 'The testimonial image URL is invalid.' }, { status: 400 })
+      }
+      payload.photo_url = photoUrl || null
+    }
     if (typeof body.is_approved === 'boolean') payload.is_approved = body.is_approved
     if (typeof body.is_featured === 'boolean') payload.is_featured = body.is_featured
 
@@ -51,7 +59,18 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
+    if (oldTestimonial.photo_url && oldTestimonial.photo_url !== data.photo_url) {
+      const oldStoragePath = getStoragePathFromPublicUrl(oldTestimonial.photo_url)
+      if (oldStoragePath) {
+        const { error: storageError } = await supabase.storage
+          .from(GALLERY_IMAGES_BUCKET)
+          .remove([oldStoragePath])
+        if (storageError) console.warn('Old testimonial image cleanup warning:', storageError.message)
+      }
+    }
+
     await supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: 'testimonial_updated',
       resource_type: 'testimonial',
       resource_id: id,
@@ -97,7 +116,18 @@ export async function DELETE(request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
+    if (oldTestimonial.photo_url) {
+      const storagePath = getStoragePathFromPublicUrl(oldTestimonial.photo_url)
+      if (storagePath) {
+        const { error: storageError } = await supabase.storage
+          .from(GALLERY_IMAGES_BUCKET)
+          .remove([storagePath])
+        if (storageError) console.warn('Deleted testimonial image cleanup warning:', storageError.message)
+      }
+    }
+
     await supabase.from('audit_logs').insert({
+      user_id: context.user.id,
       action: 'testimonial_deleted',
       resource_type: 'testimonial',
       resource_id: id,
