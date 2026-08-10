@@ -1,5 +1,6 @@
 export const GALLERY_IMAGES_BUCKET = "gallery-images";
 export const PORTFOLIO_IMAGES_FOLDER = "portfolio";
+export const TESTIMONIAL_IMAGES_FOLDER = "testimonials";
 export const MAX_PORTFOLIO_UPLOAD_FILES = 20;
 
 const ALLOWED_IMAGE_TYPES = [
@@ -55,6 +56,16 @@ export function buildPortfolioStoragePath(fileName: string) {
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return `${PORTFOLIO_IMAGES_FOLDER}/${uniqueId}-${safeName}`;
+}
+
+export function buildTestimonialStoragePath(fileName: string) {
+  const safeName = sanitizeFileName(fileName);
+  const uniqueId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `${TESTIMONIAL_IMAGES_FOLDER}/${uniqueId}-${safeName}`;
 }
 
 export function getStoragePathFromPublicUrl(
