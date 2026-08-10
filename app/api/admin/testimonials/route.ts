@@ -119,6 +119,7 @@ export async function POST(request: Request) {
     const clientName = String(body.client_name || body.name || '').trim()
     const content = String(body.content || '').trim()
     const rating = Math.min(Math.max(Number(body.rating || 5), 1), 5)
+    const photoUrl = String(body.photo_url || '').trim()
 
     if (!clientName || !content) {
       return NextResponse.json(
@@ -127,12 +128,17 @@ export async function POST(request: Request) {
       )
     }
 
+    if (photoUrl && !/^https?:\/\//i.test(photoUrl)) {
+      return NextResponse.json({ error: 'The testimonial image URL is invalid.' }, { status: 400 })
+    }
+
     const { data, error } = await supabase
       .from('testimonials')
       .insert({
         client_name: clientName,
         content,
         rating,
+        photo_url: photoUrl || null,
         session_type: body.session_type || null,
         is_approved: Boolean(body.is_approved ?? true),
         is_featured: Boolean(body.is_featured ?? false),

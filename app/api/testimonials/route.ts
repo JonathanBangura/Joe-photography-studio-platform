@@ -7,7 +7,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('testimonials')
-      .select('id, client_name, content, rating, session_type, is_featured, created_at')
+      .select('id, client_name, content, rating, session_type, photo_url, is_featured, created_at')
       .eq('is_approved', true)
       .order('is_featured', { ascending: false })
       .order('created_at', { ascending: false })
