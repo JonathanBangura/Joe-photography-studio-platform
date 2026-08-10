@@ -193,19 +193,6 @@ export default function SignUpPage() {
               )}
             </Button>
           </form>
-
-          {/* Terms */}
-          <p className="text-xs text-muted-foreground text-center mt-6">
-            By creating an account, you agree to our{' '}
-            <Link href="/terms" className="text-primary hover:underline">
-              Terms of Service
-            </Link>{' '}
-            and{' '}
-            <Link href="/privacy" className="text-primary hover:underline">
-              Privacy Policy
-            </Link>
-          </p>
-
           {/* Sign in link */}
           <p className="text-center text-sm text-muted-foreground mt-8">
             Already have an account?{' '}

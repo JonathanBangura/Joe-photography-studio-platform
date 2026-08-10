@@ -23,8 +23,6 @@ const footerLinks = {
     { label: 'Contact Us', href: '/contact' },
     { label: 'FAQ', href: '/faq' },
     { label: 'Client Portal', href: '/portal' },
-    { label: 'Privacy Policy', href: '/privacy' },
-    { label: 'Terms of Service', href: '/terms' },
   ],
 }
 
@@ -191,17 +189,6 @@ export function Footer() {
           <p className="text-sm text-muted-foreground">
             &copy; {new Date().getFullYear()} {settings.business_name}. All rights reserved.
           </p>
-          <div className="flex items-center gap-6">
-            <Link href="/privacy" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-              Privacy
-            </Link>
-            <Link href="/terms" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-              Terms
-            </Link>
-            <Link href="/cookies" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-              Cookies
-            </Link>
-          </div>
         </div>
       </div>
     </footer>
