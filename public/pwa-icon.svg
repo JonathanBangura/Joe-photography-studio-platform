@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">JoeStudio camera icon</title>
+  <rect width="512" height="512" rx="112" fill="#171411"/>
+  <rect x="86" y="166" width="340" height="238" rx="54" fill="#c98a00"/>
+  <path d="M169 166l32-52h110l32 52z" fill="#c98a00"/>
+  <circle cx="256" cy="285" r="92" fill="#171411"/>
+  <circle cx="256" cy="285" r="58" fill="#c98a00"/>
+  <circle cx="365" cy="217" r="18" fill="#171411"/>
+</svg>
