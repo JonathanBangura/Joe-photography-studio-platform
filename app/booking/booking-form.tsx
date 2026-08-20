@@ -9,7 +9,14 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CheckCircle, ArrowRight, ArrowLeft, Camera, CreditCard, AlertCircle, Lock, Check, X } from 'lucide-react'
-import { defaultCurrencySettings, formatDisplayPrice, formatSle, convertUsdToSle, type CurrencySettings } from '@/lib/currency'
+import { defaultCurrencySettings, formatDisplayAmounts, formatSle, type CurrencySettings } from '@/lib/currency'
+import {
+  calculateBookingPrice,
+  getServicePricingType,
+  getServiceQuantityRules,
+  getServiceUnitLabel,
+  validateServiceQuantity,
+} from '@/lib/booking-pricing'
 
 interface Service {
   id: string
@@ -17,8 +24,14 @@ interface Service {
   description: string | null
   session_type?: string | null
   base_price: number
+  base_price_sle?: number | null
   duration_minutes: number
   includes?: string[] | null
+  pricing_type?: 'fixed' | 'per_unit' | null
+  unit_label?: string | null
+  minimum_quantity?: number | null
+  maximum_quantity?: number | null
+  quantity_step?: number | null
 }
 
 interface StudioResource {
@@ -56,6 +69,7 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
   const [paymentLink, setPaymentLink] = useState<string | null>(null)
 
   const [selectedService, setSelectedService] = useState<Service | null>(null)
+  const [serviceQuantity, setServiceQuantity] = useState(1)
   const [selectedDate, setSelectedDate] = useState('')
   const [selectedTime, setSelectedTime] = useState('')
 
@@ -82,23 +96,19 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
 
   const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
-  const totalAmount = Number(selectedService?.base_price || 0)
-  const totalAmountSle = useMemo(() => convertUsdToSle(totalAmount, currencySettings.usd_to_sle_rate), [totalAmount, currencySettings.usd_to_sle_rate])
-
-  const depositAmount = useMemo(
-    () => Number(((totalAmount * Number(depositPercentage)) / 100).toFixed(2)),
-    [totalAmount, depositPercentage],
+  const bookingPrice = useMemo(
+    () => calculateBookingPrice({
+      service: selectedService || { base_price: 0 },
+      quantity: serviceQuantity,
+      depositPercentage,
+      exchangeRate: currencySettings.usd_to_sle_rate,
+    }),
+    [selectedService, serviceQuantity, depositPercentage, currencySettings.usd_to_sle_rate],
   )
-
-  const depositAmountSle = useMemo(
-    () => convertUsdToSle(depositAmount, currencySettings.usd_to_sle_rate),
-    [depositAmount, currencySettings.usd_to_sle_rate],
-  )
-
-  const balanceAmount = useMemo(
-    () => Number((totalAmount - depositAmount).toFixed(2)),
-    [totalAmount, depositAmount],
-  )
+  const totalAmount = bookingPrice.total
+  const depositAmount = bookingPrice.depositRequired
+  const depositAmountSle = bookingPrice.depositRequiredSle
+  const balanceAmount = bookingPrice.balanceAfterDeposit
 
 
   const selectedResource = resources.find((resource) => resource.id === resourceId)
@@ -237,6 +247,15 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
       return false
     }
 
+    if (step === 1 && selectedService) {
+      try {
+        validateServiceQuantity(selectedService, serviceQuantity)
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Please enter a valid photo quantity.')
+        return false
+      }
+    }
+
     if (step === 2 && (!selectedDate || !selectedTime || !bookingEnvironment || !privacyLevel || !resourceId)) {
       setErrorMessage('Please select date, time, booking type and an available resource.')
       return false
@@ -264,6 +283,11 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
     if (validateStep()) setStep((current) => Math.min(current + 1, 4))
   }
 
+  const chooseService = (service: Service) => {
+    setSelectedService(service)
+    setServiceQuantity(getServiceQuantityRules(service).minimum)
+  }
+
   const handleSubmit = async () => {
     if (!validateStep() || !selectedService) return
 
@@ -289,11 +313,8 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
           location: formData.location || (bookingEnvironment === 'outdoor' ? 'Outdoor' : 'Studio'),
           notes: formData.notes,
           deposit_percentage: Number(depositPercentage),
+          service_quantity: serviceQuantity,
           deposit_paid_amount: 0,
-          total_amount: totalAmount,
-          exchange_rate: currencySettings.usd_to_sle_rate,
-          total_amount_sle: totalAmountSle,
-          deposit_required_amount_sle: depositAmountSle,
           profile_id: clientInfo?.profile?.id || null,
         }),
       })
@@ -345,12 +366,21 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
               </p>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="grid md:grid-cols-2 gap-6" role="radiogroup" aria-label="Photography packages">
               {services.map((service) => (
                 <Card
                   key={service.id}
                   className={`cursor-pointer transition-all hover:border-primary ${selectedService?.id === service.id ? 'border-primary ring-2 ring-primary/20' : ''}`}
-                  onClick={() => setSelectedService(service)}
+                  role="radio"
+                  aria-checked={selectedService?.id === service.id}
+                  tabIndex={0}
+                  onClick={() => chooseService(service)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      chooseService(service)
+                    }
+                  }}
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between gap-4">
@@ -358,7 +388,18 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                         <CardTitle>{service.name}</CardTitle>
                         <CardDescription className="mt-1">{service.description}</CardDescription>
                       </div>
-                      <div className="text-right text-lg font-bold text-primary">{formatDisplayPrice(service.base_price, currencySettings)}</div>
+                      <div className="text-right text-lg font-bold text-primary">
+                        {formatDisplayAmounts(
+                          service.base_price,
+                          Number(service.base_price_sle || service.base_price * currencySettings.usd_to_sle_rate),
+                          currencySettings,
+                        )}
+                        {getServicePricingType(service) === 'per_unit' && (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            per {getServiceUnitLabel(service)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -370,6 +411,43 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                 </Card>
               ))}
             </div>
+
+            {selectedService && getServicePricingType(selectedService) === 'per_unit' && (
+              <Card className="border-primary/30 bg-primary/5">
+                <CardHeader>
+                  <CardTitle className="text-lg">Choose Your Photo Quantity</CardTitle>
+                  <CardDescription>
+                    Select how many edited photos you want to receive from this session.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-[1fr_1fr] md:items-end">
+                  <div className="space-y-2">
+                    <Label htmlFor="service-quantity">Number of edited photos</Label>
+                    <Input
+                      id="service-quantity"
+                      type="number"
+                      min={getServiceQuantityRules(selectedService).minimum}
+                      max={getServiceQuantityRules(selectedService).maximum}
+                      step={getServiceQuantityRules(selectedService).step}
+                      value={serviceQuantity}
+                      onChange={(event) => setServiceQuantity(Number(event.target.value))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Minimum {getServiceQuantityRules(selectedService).minimum}, maximum {getServiceQuantityRules(selectedService).maximum}.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border bg-background p-4">
+                    <p className="text-sm text-muted-foreground">Live session total</p>
+                    <p className="text-2xl font-bold text-primary">
+                      {formatDisplayAmounts(totalAmount, bookingPrice.totalSle, currencySettings)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {serviceQuantity} × {formatDisplayAmounts(bookingPrice.unitPrice, bookingPrice.unitPriceSle, currencySettings)}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="flex justify-end">
               <Button onClick={goNext} disabled={!selectedService}>
@@ -608,6 +686,20 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                   <strong>{selectedService.name}</strong>
                 </div>
 
+                {getServicePricingType(selectedService) === 'per_unit' && (
+                  <div className="flex justify-between">
+                    <span>Edited Photos</span>
+                    <strong>{serviceQuantity}</strong>
+                  </div>
+                )}
+
+                {getServicePricingType(selectedService) === 'per_unit' && (
+                  <div className="flex justify-between">
+                    <span>Price per {getServiceUnitLabel(selectedService)}</span>
+                    <strong>{formatDisplayAmounts(bookingPrice.unitPrice, bookingPrice.unitPriceSle, currencySettings)}</strong>
+                  </div>
+                )}
+
                 <div className="flex justify-between">
                   <span>Date & Time</span>
                   <strong>{selectedDate} at {selectedTime}</strong>
@@ -645,15 +737,15 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                 <div className="rounded-lg border p-4 space-y-2">
                   <div className="flex justify-between">
                     <span>Total Session Fee</span>
-                    <strong>{formatDisplayPrice(totalAmount, currencySettings)}</strong>
+                    <strong>{formatDisplayAmounts(totalAmount, bookingPrice.totalSle, currencySettings)}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Deposit Required</span>
-                    <strong>{formatDisplayPrice(depositAmount, currencySettings)}</strong>
+                    <strong>{formatDisplayAmounts(depositAmount, bookingPrice.depositRequiredSle, currencySettings)}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Balance Due</span>
-                    <strong>{formatDisplayPrice(balanceAmount, currencySettings)}</strong>
+                    <strong>{formatDisplayAmounts(balanceAmount, bookingPrice.balanceAfterDepositSle, currencySettings)}</strong>
                   </div>
                 </div>
 

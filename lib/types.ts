@@ -53,6 +53,12 @@ export interface Service {
   description: string | null
   category: string
   base_price: number
+  base_price_sle?: number | null
+  pricing_type?: 'fixed' | 'per_unit'
+  unit_label?: string | null
+  minimum_quantity?: number | null
+  maximum_quantity?: number | null
+  quantity_step?: number | null
   duration_minutes: number | null
   deposit_amount: number | null
   is_active: boolean
@@ -83,6 +89,11 @@ export interface Booking {
   location: string | null
   notes: string | null
   total_amount: number | null
+  service_quantity?: number | null
+  unit_price?: number | null
+  unit_price_sle?: number | null
+  pricing_type_snapshot?: 'fixed' | 'per_unit' | null
+  unit_label_snapshot?: string | null
   deposit_paid: number | null
   deposit_paid_at: string | null
   created_at: string

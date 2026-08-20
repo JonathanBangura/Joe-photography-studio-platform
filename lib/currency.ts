@@ -55,6 +55,21 @@ export function formatDisplayPrice(usdAmount: number, settings: Partial<Currency
   return `${prefix}${formatUsd(usd)} / ${formatSle(sle)}`
 }
 
+export function formatDisplayAmounts(
+  usdAmount: number,
+  sleAmount: number,
+  settings: Partial<CurrencySettings> | Record<string, unknown> | null | undefined,
+  prefix = '',
+) {
+  const normalized = normalizeCurrencySettings(settings)
+  const usd = Number(usdAmount || 0)
+  const sle = Number(sleAmount || 0)
+
+  if (normalized.price_display_mode === 'usd_only') return `${prefix}${formatUsd(usd)}`
+  if (normalized.price_display_mode === 'sle_only') return `${prefix}${formatSle(sle)}`
+  return `${prefix}${formatUsd(usd)} / ${formatSle(sle)}`
+}
+
 export function formatDualAmount(usdAmount: number, exchangeRate: number) {
   return `${formatUsd(usdAmount)} / ${formatSle(convertUsdToSle(usdAmount, exchangeRate))}`
 }

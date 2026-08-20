@@ -22,6 +22,12 @@ interface Service {
   description: string | null
   session_type: string
   base_price: number
+  base_price_sle?: number | null
+  pricing_type?: "fixed" | "per_unit"
+  unit_label?: string | null
+  minimum_quantity?: number | null
+  maximum_quantity?: number | null
+  quantity_step?: number | null
   duration_minutes: number
   includes: string[] | null
   is_active: boolean
@@ -46,17 +52,31 @@ export default function AdminServicesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [editingService, setEditingService] = useState<Service | null>(null)
+  const [currencyRate, setCurrencyRate] = useState(24)
   const [formData, setFormData] = useState({
     name: "",
     session_type: "",
     base_price: "",
+    local_price: "",
     duration_minutes: "",
     description: "",
     includes: "",
+    pricing_type: "fixed" as "fixed" | "per_unit",
+    unit_label: "edited photo",
+    minimum_quantity: "1",
+    maximum_quantity: "100",
+    quantity_step: "1",
   })
 
   useEffect(() => {
     fetchServices()
+    fetch("/api/business-settings")
+      .then((response) => response.json())
+      .then((result) => {
+        const rate = Number(result?.settings?.usd_to_sle_rate || 24)
+        if (Number.isFinite(rate) && rate > 0) setCurrencyRate(rate)
+      })
+      .catch(() => undefined)
   }, [])
 
   const fetchServices = async () => {
@@ -84,9 +104,15 @@ export default function AdminServicesPage() {
         name: service.name,
         session_type: service.session_type,
         base_price: service.base_price.toString(),
+        local_price: Number(service.base_price_sle || service.base_price * currencyRate).toFixed(2),
         duration_minutes: service.duration_minutes.toString(),
         description: service.description || "",
         includes: service.includes?.join("\n") || "",
+        pricing_type: service.pricing_type === "per_unit" ? "per_unit" : "fixed",
+        unit_label: service.unit_label || "edited photo",
+        minimum_quantity: String(service.minimum_quantity || 1),
+        maximum_quantity: String(service.maximum_quantity || 100),
+        quantity_step: String(service.quantity_step || 1),
       })
     } else {
       setEditingService(null)
@@ -94,9 +120,15 @@ export default function AdminServicesPage() {
         name: "",
         session_type: "",
         base_price: "",
+        local_price: "",
         duration_minutes: "",
         description: "",
         includes: "",
+        pricing_type: "fixed",
+        unit_label: "edited photo",
+        minimum_quantity: "1",
+        maximum_quantity: "100",
+        quantity_step: "1",
       })
     }
     setIsDialogOpen(true)
@@ -105,6 +137,15 @@ export default function AdminServicesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
+
+    if (
+      formData.pricing_type === "per_unit" &&
+      Number(formData.maximum_quantity) < Number(formData.minimum_quantity)
+    ) {
+      toast.error("Maximum quantity must be greater than or equal to the minimum")
+      setIsSubmitting(false)
+      return
+    }
     
     const includesArray = formData.includes
       .split("\n")
@@ -115,9 +156,15 @@ export default function AdminServicesPage() {
       name: formData.name,
       session_type: formData.session_type,
       base_price: parseFloat(formData.base_price),
+      base_price_sle: parseFloat(formData.local_price),
       duration_minutes: parseInt(formData.duration_minutes),
       description: formData.description || null,
       includes: includesArray.length > 0 ? includesArray : null,
+      pricing_type: formData.pricing_type,
+      unit_label: formData.unit_label.trim() || "edited photo",
+      minimum_quantity: formData.pricing_type === "per_unit" ? parseInt(formData.minimum_quantity) : 1,
+      maximum_quantity: formData.pricing_type === "per_unit" ? parseInt(formData.maximum_quantity) : 1,
+      quantity_step: formData.pricing_type === "per_unit" ? parseInt(formData.quantity_step) : 1,
     }
 
     if (editingService) {
@@ -258,16 +305,51 @@ export default function AdminServicesPage() {
                   </Select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
-                  <Label htmlFor="base_price">Base Price ($)</Label>
+                  <Label htmlFor="base_price">
+                    {formData.pricing_type === "per_unit" ? "Price per Edited Photo ($)" : "Package Price ($)"}
+                  </Label>
                   <Input
                     id="base_price"
                     type="number"
                     min="0"
                     step="0.01"
                     value={formData.base_price}
-                    onChange={(e) => setFormData({ ...formData, base_price: e.target.value })}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      const amount = Number(value)
+                      setFormData({
+                        ...formData,
+                        base_price: value,
+                        local_price: value !== "" && Number.isFinite(amount) ? (amount * currencyRate).toFixed(2) : "",
+                      })
+                    }}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="local_price">
+                    {formData.pricing_type === "per_unit" ? "Price per Edited Photo (SLE)" : "Package Price (SLE)"}
+                  </Label>
+                  <Input
+                    id="local_price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.local_price}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      const amount = Number(value)
+                      setFormData({
+                        ...formData,
+                        local_price: value,
+                        base_price: value !== "" && Number.isFinite(amount) && currencyRate > 0
+                          ? (amount / currencyRate).toFixed(2)
+                          : "",
+                      })
+                    }}
                     placeholder="0.00"
                     required
                   />
@@ -284,6 +366,75 @@ export default function AdminServicesPage() {
                     required
                   />
                 </div>
+              </div>
+              <div className="rounded-lg border p-4 space-y-4">
+                <div className="space-y-2">
+                  <Label>Pricing Model</Label>
+                  <Select
+                    value={formData.pricing_type}
+                    onValueChange={(value) => setFormData({
+                      ...formData,
+                      pricing_type: value as "fixed" | "per_unit",
+                    })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Fixed Package Price</SelectItem>
+                      <SelectItem value="per_unit">Price per Edited Photo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Choose per-photo for indoor, portrait, graduation or passport services where the client selects a quantity.
+                  </p>
+                </div>
+
+                {formData.pricing_type === "per_unit" && (
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="unit_label">Unit Name</Label>
+                      <Input
+                        id="unit_label"
+                        value={formData.unit_label}
+                        onChange={(e) => setFormData({ ...formData, unit_label: e.target.value })}
+                        placeholder="edited photo"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="minimum_quantity">Minimum</Label>
+                      <Input
+                        id="minimum_quantity"
+                        type="number"
+                        min="1"
+                        value={formData.minimum_quantity}
+                        onChange={(e) => setFormData({ ...formData, minimum_quantity: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="maximum_quantity">Maximum</Label>
+                      <Input
+                        id="maximum_quantity"
+                        type="number"
+                        min={formData.minimum_quantity || "1"}
+                        value={formData.maximum_quantity}
+                        onChange={(e) => setFormData({ ...formData, maximum_quantity: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="quantity_step">Step</Label>
+                      <Input
+                        id="quantity_step"
+                        type="number"
+                        min="1"
+                        value={formData.quantity_step}
+                        onChange={(e) => setFormData({ ...formData, quantity_step: e.target.value })}
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
@@ -403,7 +554,17 @@ export default function AdminServicesPage() {
                         {service.session_type}
                       </Badge>
                     </TableCell>
-                    <TableCell>${service.base_price.toLocaleString()}</TableCell>
+                    <TableCell>
+                      ${service.base_price.toLocaleString()}
+                      {service.pricing_type === "per_unit" && (
+                        <span className="block text-xs text-muted-foreground">
+                          per {service.unit_label || "edited photo"}
+                        </span>
+                      )}
+                      <span className="block text-xs text-muted-foreground">
+                        SLE {Number(service.base_price_sle || service.base_price * currencyRate).toLocaleString()}
+                      </span>
+                    </TableCell>
                     <TableCell>{formatDuration(service.duration_minutes)}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
