@@ -8,10 +8,10 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Edit2, Trash2, DollarSign, Clock, Camera, Loader2 } from "lucide-react"
+import { Plus, Edit2, Trash2, DollarSign, Clock, Camera, FolderPlus, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { adminDbMutation } from "@/lib/admin-api-client"
 import { toast } from "sonner"
@@ -34,25 +34,42 @@ interface Service {
   created_at: string
 }
 
-const sessionTypes = [
-  { value: "portrait", label: "Portrait" },
-  { value: "wedding", label: "Wedding" },
-  { value: "event", label: "Event" },
-  { value: "corporate", label: "Corporate" },
-  { value: "product", label: "Product" },
-  { value: "family", label: "Family" },
-  { value: "maternity", label: "Maternity" },
-  { value: "newborn", label: "Newborn" },
-  { value: "other", label: "Other" },
-]
+interface ServiceCategory {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  is_active: boolean
+  sort_order: number | null
+}
+
+async function readApiResponse(response: Response) {
+  const text = await response.text()
+  if (!text) return {}
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    return {
+      error: response.ok
+        ? "The server returned an invalid response."
+        : text.slice(0, 180) || `Request failed (${response.status}).`,
+    }
+  }
+}
 
 export default function AdminServicesPage() {
   const [services, setServices] = useState<Service[]>([])
+  const [categories, setCategories] = useState<ServiceCategory[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [categoriesLoading, setCategoriesLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isCategorySubmitting, setIsCategorySubmitting] = useState(false)
   const [editingService, setEditingService] = useState<Service | null>(null)
   const [currencyRate, setCurrencyRate] = useState(24)
+  const [categoryForm, setCategoryForm] = useState({ name: "", description: "" })
   const [formData, setFormData] = useState({
     name: "",
     session_type: "",
@@ -69,7 +86,8 @@ export default function AdminServicesPage() {
   })
 
   useEffect(() => {
-    fetchServices()
+    void fetchServices()
+    void fetchCategories()
     fetch("/api/business-settings")
       .then((response) => response.json())
       .then((result) => {
@@ -78,6 +96,31 @@ export default function AdminServicesPage() {
       })
       .catch(() => undefined)
   }, [])
+
+  const fetchCategories = async () => {
+    setCategoriesLoading(true)
+    try {
+      const response = await fetch("/api/admin/service-categories", { cache: "no-store" })
+      const result = await readApiResponse(response)
+      if (!response.ok) throw new Error(result.error || "Failed to load service categories")
+
+      const loadedCategories = Array.isArray(result.data)
+        ? result.data as ServiceCategory[]
+        : []
+      setCategories(loadedCategories)
+      setFormData((current) => {
+        const selectableCategories = loadedCategories.filter((category) => category.is_active)
+        const currentExists = loadedCategories.some((category) => category.slug === current.session_type)
+        if (currentExists || selectableCategories.length === 0) return current
+        return { ...current, session_type: selectableCategories[0].slug }
+      })
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : "Failed to load service categories")
+    } finally {
+      setCategoriesLoading(false)
+    }
+  }
 
   const fetchServices = async () => {
     setIsLoading(true)
@@ -115,10 +158,11 @@ export default function AdminServicesPage() {
         quantity_step: String(service.quantity_step || 1),
       })
     } else {
+      const defaultCategory = categories.find((category) => category.is_active)
       setEditingService(null)
       setFormData({
         name: "",
-        session_type: "",
+        session_type: defaultCategory?.slug || "",
         base_price: "",
         local_price: "",
         duration_minutes: "",
@@ -134,18 +178,79 @@ export default function AdminServicesPage() {
     setIsDialogOpen(true)
   }
 
+  const openCategoryDialog = () => {
+    setCategoryForm({ name: "", description: "" })
+    setIsCategoryDialogOpen(true)
+  }
+
+  const saveCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      toast.error("Category name is required")
+      return
+    }
+
+    setIsCategorySubmitting(true)
+    try {
+      const response = await fetch("/api/admin/service-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(categoryForm),
+      })
+      const result = await readApiResponse(response)
+      if (!response.ok) throw new Error(result.error || "Failed to create service category")
+
+      const newCategory = result.data as ServiceCategory
+      setCategories((current) => [...current, newCategory].sort((first, second) => {
+        const orderDifference = Number(first.sort_order || 0) - Number(second.sort_order || 0)
+        return orderDifference || first.name.localeCompare(second.name)
+      }))
+      setFormData((current) => ({ ...current, session_type: newCategory.slug }))
+      setCategoryForm({ name: "", description: "" })
+      setIsCategoryDialogOpen(false)
+      toast.success(`Service category "${newCategory.name}" created`)
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : "Failed to create service category")
+    } finally {
+      setIsCategorySubmitting(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
+
+    if (!formData.session_type) {
+      toast.error("Create or select a service category first")
+      return
+    }
+
+    const basePrice = Number(formData.base_price)
+    const localPrice = Number(formData.local_price)
+    const durationMinutes = Number(formData.duration_minutes)
+    const minimumQuantity = Number(formData.minimum_quantity)
+    const maximumQuantity = Number(formData.maximum_quantity)
+    const quantityStep = Number(formData.quantity_step)
+
+    if (!Number.isFinite(basePrice) || basePrice < 0 || !Number.isFinite(localPrice) || localPrice < 0) {
+      toast.error("Enter valid USD and SLE prices")
+      return
+    }
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 1) {
+      toast.error("Duration must be at least 1 minute")
+      return
+    }
 
     if (
       formData.pricing_type === "per_unit" &&
-      Number(formData.maximum_quantity) < Number(formData.minimum_quantity)
+      (!Number.isInteger(minimumQuantity) || minimumQuantity < 1 ||
+        !Number.isInteger(maximumQuantity) || maximumQuantity < minimumQuantity ||
+        !Number.isInteger(quantityStep) || quantityStep < 1)
     ) {
-      toast.error("Maximum quantity must be greater than or equal to the minimum")
-      setIsSubmitting(false)
+      toast.error("Use whole-number quantity rules; maximum must be at least the minimum")
       return
     }
+
+    setIsSubmitting(true)
     
     const includesArray = formData.includes
       .split("\n")
@@ -155,21 +260,20 @@ export default function AdminServicesPage() {
     const serviceData = {
       name: formData.name,
       session_type: formData.session_type,
-      base_price: parseFloat(formData.base_price),
-      base_price_sle: parseFloat(formData.local_price),
-      duration_minutes: parseInt(formData.duration_minutes),
+      base_price: basePrice,
+      base_price_sle: localPrice,
+      duration_minutes: durationMinutes,
       description: formData.description || null,
       includes: includesArray.length > 0 ? includesArray : null,
       pricing_type: formData.pricing_type,
       unit_label: formData.unit_label.trim() || "edited photo",
-      minimum_quantity: formData.pricing_type === "per_unit" ? parseInt(formData.minimum_quantity) : 1,
-      maximum_quantity: formData.pricing_type === "per_unit" ? parseInt(formData.maximum_quantity) : 1,
-      quantity_step: formData.pricing_type === "per_unit" ? parseInt(formData.quantity_step) : 1,
+      minimum_quantity: formData.pricing_type === "per_unit" ? minimumQuantity : 1,
+      maximum_quantity: formData.pricing_type === "per_unit" ? maximumQuantity : 1,
+      quantity_step: formData.pricing_type === "per_unit" ? quantityStep : 1,
     }
 
-    if (editingService) {
-      // Update existing service
-      try {
+    try {
+      if (editingService) {
         await adminDbMutation({
           table: "services",
           action: "update",
@@ -177,29 +281,22 @@ export default function AdminServicesPage() {
           payload: serviceData,
         })
         toast.success("Service updated successfully")
-        fetchServices()
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to update service")
-        console.error(error)
-      }
-    } else {
-      // Create new service
-      try {
+      } else {
         await adminDbMutation({
           table: "services",
           action: "insert",
           payload: serviceData,
         })
         toast.success("Service created successfully")
-        fetchServices()
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to create service")
-        console.error(error)
       }
+      await fetchServices()
+      setIsDialogOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save service")
+      console.error(error)
+    } finally {
+      setIsSubmitting(false)
     }
-
-    setIsSubmitting(false)
-    setIsDialogOpen(false)
   }
 
   const toggleServiceStatus = async (id: string, currentStatus: boolean) => {
@@ -244,6 +341,11 @@ export default function AdminServicesPage() {
     return mins > 0 ? `${hours}h ${mins}m` : `${hours} hours`
   }
 
+  const getCategoryName = (slug: string) => {
+    return categories.find((category) => category.slug === slug)?.name
+      || slug.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+  }
+
   const activeServices = services.filter(s => s.is_active)
   const avgPrice = services.length > 0 
     ? Math.round(services.reduce((acc, s) => acc + s.base_price, 0) / services.length)
@@ -266,7 +368,7 @@ export default function AdminServicesPage() {
               Add Service
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingService ? "Edit Service" : "Add New Service"}</DialogTitle>
               <DialogDescription>
@@ -286,23 +388,34 @@ export default function AdminServicesPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="session_type">Session Type</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="session_type">Service Category</Label>
+                    <Button type="button" variant="ghost" size="sm" onClick={openCategoryDialog}>
+                      <FolderPlus className="mr-1 h-4 w-4" />
+                      New
+                    </Button>
+                  </div>
                   <Select
                     value={formData.session_type}
                     onValueChange={(value) => setFormData({ ...formData, session_type: value })}
-                    required
+                    disabled={categoriesLoading || categories.filter((category) => category.is_active).length === 0}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
+                      <SelectValue placeholder={categoriesLoading ? "Loading categories..." : "Select category"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {sessionTypes.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
+                      {categories
+                        .filter((category) => category.is_active || category.slug === formData.session_type)
+                        .map((category) => (
+                        <SelectItem key={category.id} value={category.slug}>
+                          {category.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {!categoriesLoading && categories.filter((category) => category.is_active).length === 0 && (
+                    <p className="text-xs text-destructive">Create a service category before saving this service.</p>
+                  )}
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-3">
@@ -359,7 +472,7 @@ export default function AdminServicesPage() {
                   <Input
                     id="duration"
                     type="number"
-                    min="0"
+                    min="1"
                     value={formData.duration_minutes}
                     onChange={(e) => setFormData({ ...formData, duration_minutes: e.target.value })}
                     placeholder="60"
@@ -460,7 +573,7 @@ export default function AdminServicesPage() {
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={isSubmitting}>
+                <Button type="submit" disabled={isSubmitting || !formData.session_type}>
                   {isSubmitting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -551,7 +664,7 @@ export default function AdminServicesPage() {
                     <TableCell className="font-medium">{service.name}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="capitalize">
-                        {service.session_type}
+                        {getCategoryName(service.session_type)}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -603,6 +716,57 @@ export default function AdminServicesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isCategoryDialogOpen} onOpenChange={(open) => {
+        if (!isCategorySubmitting) setIsCategoryDialogOpen(open)
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Service Category</DialogTitle>
+            <DialogDescription>
+              Add a completely new category. It will be selected immediately for this service instead of being stored as Other.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="service-category-name">Category Name</Label>
+              <Input
+                id="service-category-name"
+                value={categoryForm.name}
+                onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })}
+                placeholder="e.g., Nail Services"
+                maxLength={80}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-category-description">Description (optional)</Label>
+              <Textarea
+                id="service-category-description"
+                value={categoryForm.description}
+                onChange={(event) => setCategoryForm({ ...categoryForm, description: event.target.value })}
+                placeholder="A short description of this category"
+                maxLength={500}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsCategoryDialogOpen(false)}
+              disabled={isCategorySubmitting}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={saveCategory} disabled={isCategorySubmitting}>
+              {isCategorySubmitting ? "Creating..." : "Create Category"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

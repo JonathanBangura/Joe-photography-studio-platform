@@ -13,7 +13,7 @@ import { MapPin, Phone, Mail, Clock, Send, CheckCircle } from "lucide-react"
 import type { PublicBusinessSettings } from "@/lib/business-settings-public"
 import { defaultPublicBusinessSettings } from "@/lib/business-settings-public"
 
-const sessionTypes = [
+const defaultSessionTypes = [
   { value: "portrait", label: "Portrait Photography" },
   { value: "wedding", label: "Wedding Photography" },
   { value: "event", label: "Event Coverage" },
@@ -22,8 +22,15 @@ const sessionTypes = [
   { value: "family", label: "Family Sessions" },
   { value: "maternity", label: "Maternity" },
   { value: "newborn", label: "Newborn" },
-  { value: "other", label: "Other" },
 ]
+
+function categoryLabel(slug: string) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
 
 function buildAddress(settings: PublicBusinessSettings) {
   return [settings.address, settings.city, settings.state, settings.country]
@@ -43,6 +50,7 @@ export default function ContactPage() {
   const [settings, setSettings] = useState<PublicBusinessSettings>(
     defaultPublicBusinessSettings,
   )
+  const [sessionTypes, setSessionTypes] = useState(defaultSessionTypes)
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -69,7 +77,30 @@ export default function ContactPage() {
       }
     }
 
-    loadSettings()
+    async function loadServiceCategories() {
+      try {
+        const response = await fetch('/api/public/services', { cache: 'no-store' })
+        const result = await response.json()
+        if (!response.ok || !Array.isArray(result.services)) return
+
+        const categories = new Map<string, string>()
+        result.services.forEach((service: { session_type?: unknown }) => {
+          const slug = String(service.session_type || '').trim().toLowerCase()
+          if (slug && !categories.has(slug)) categories.set(slug, categoryLabel(slug))
+        })
+
+        if (categories.size > 0) {
+          setSessionTypes(
+            Array.from(categories, ([value, label]) => ({ value, label }))
+              .sort((first, second) => first.label.localeCompare(second.label)),
+          )
+        }
+      } catch (error) {
+        console.error('Contact service categories load failed:', error)
+      }
+    }
+
+    void Promise.all([loadSettings(), loadServiceCategories()])
   }, [])
 
   const studioAddress = useMemo(() => buildAddress(settings), [settings])
