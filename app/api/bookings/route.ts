@@ -3,6 +3,12 @@ import { sendEmailSafely } from '@/lib/mail'
 import { getInternalNotificationRecipients } from '@/lib/notification-recipients'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { requireAdminContext } from '@/lib/admin-auth'
+import {
+  calculateBookingPrice,
+  getServiceUnitLabel,
+  validateServiceQuantity,
+} from '@/lib/booking-pricing'
 
 const WORKFLOW_STAGES = [
   { name: 'Booking Received', description: 'Booking has been created and is awaiting confirmation.', color: '#F59E0B', sort_order: 1 },
@@ -187,7 +193,7 @@ async function assertAvailability(params: {
 
   if (error) throw error
 
-  const existing = (overlapping || []) as ExistingBooking[]
+  const existing = (overlapping || []) as unknown as ExistingBooking[]
   const newIsIndoor = bookingEnvironment === 'indoor' || resource?.type === 'indoor' || resource?.type === 'desk'
 
   if (newIsIndoor && privacyLevel === 'private') {
@@ -225,6 +231,14 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const supabase = createAdminClient()
     const isPortalBooking = body.portal_booking === true
+    const isWalkInBooking = body.booking_source === 'walk_in'
+    let adminUserId: string | null = null
+
+    if (isWalkInBooking) {
+      const adminContext = await requireAdminContext()
+      if ('error' in adminContext) return adminContext.error
+      adminUserId = adminContext.user.id
+    }
 
     const serviceId = String(body.service_id || '')
     const bookingDate = String(body.booking_date || '')
@@ -280,13 +294,31 @@ export async function POST(request: NextRequest) {
     }
 
     const currencySettings = await getCurrencySettings(supabase)
-    const exchangeRate = Number(body.exchange_rate || currencySettings.usd_to_sle_rate || 24)
+    const exchangeRate = Number(currencySettings.usd_to_sle_rate || 24)
+    const depositPercentage = Number(body.deposit_percentage) === 30 ? 30 : 50
+    let serviceQuantity = 1
+
+    try {
+      serviceQuantity = validateServiceQuantity(service, body.service_quantity ?? 1)
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid photo quantity.' },
+        { status: 400 },
+      )
+    }
+
+    const price = calculateBookingPrice({
+      service,
+      quantity: serviceQuantity,
+      depositPercentage,
+      exchangeRate,
+    })
 
     const bookingEnvironment = normalizeEnvironment(body.booking_environment)
     const privacyLevel = normalizePrivacy(body.privacy_level)
     const resourceId = body.resource_id ? String(body.resource_id) : null
     const staffId = body.staff_id ? String(body.staff_id) : null
-    const allowOverride = Boolean(body.availability_override)
+    const allowOverride = Boolean(adminUserId && body.availability_override)
     const endTime = body.end_time || addMinutes(startTime, Number(service.duration_minutes || 60))
 
     await assertAvailability({
@@ -349,15 +381,29 @@ export async function POST(request: NextRequest) {
       client = createdClient
     }
 
-    const depositPercentage = Number(body.deposit_percentage || 50)
-    const totalAmount = Number(body.total_amount || service.base_price || 0)
-    const totalAmountSle = Number(body.total_amount_sle || toSle(totalAmount, exchangeRate))
-    const depositRequiredAmount = Number(((totalAmount * depositPercentage) / 100).toFixed(2))
-    const depositRequiredAmountSle = Number(body.deposit_required_amount_sle || toSle(depositRequiredAmount, exchangeRate))
-    const depositPaidAmount = Number(body.deposit_paid_amount || 0)
-    const depositPaidAmountSle = Number(body.deposit_paid_amount_sle || toSle(depositPaidAmount, exchangeRate))
-    const depositStatus = depositPaidAmount >= depositRequiredAmount ? 'paid' : depositPaidAmount > 0 ? 'partial' : 'required'
-    const bookingSource = body.booking_source === 'walk_in' ? 'walk_in' : 'online'
+    const totalAmount = price.total
+    const totalAmountSle = price.totalSle
+    const depositRequiredAmount = price.depositRequired
+    const depositRequiredAmountSle = price.depositRequiredSle
+    const requestedPaidSle = isWalkInBooking
+      ? Number(body.deposit_paid_amount_sle || toSle(Number(body.deposit_paid_amount || 0), exchangeRate))
+      : 0
+    const depositPaidAmountSle = Number(Math.max(requestedPaidSle, 0).toFixed(2))
+
+    if (!Number.isFinite(depositPaidAmountSle) || depositPaidAmountSle > totalAmountSle) {
+      return NextResponse.json(
+        { error: 'The recorded payment must be a valid amount that does not exceed the booking total.' },
+        { status: 400 },
+      )
+    }
+
+    const depositPaidAmount = Number((depositPaidAmountSle / exchangeRate).toFixed(2))
+    const depositStatus = depositPaidAmountSle >= depositRequiredAmountSle
+      ? 'paid'
+      : depositPaidAmountSle > 0
+        ? 'partial'
+        : 'required'
+    const bookingSource = isWalkInBooking ? 'walk_in' : 'online'
     const reference = bookingReference()
 
     const { data: booking, error: bookingError } = await supabase
@@ -373,6 +419,11 @@ export async function POST(request: NextRequest) {
         location: body.location || (bookingEnvironment === 'outdoor' ? 'Outdoor' : 'Studio'),
         status: depositPaidAmount > 0 || bookingSource === 'walk_in' ? 'confirmed' : 'pending',
         total_amount: totalAmount,
+        service_quantity: price.quantity,
+        unit_price: price.unitPrice,
+        unit_price_sle: price.unitPriceSle,
+        pricing_type_snapshot: price.pricingType,
+        unit_label_snapshot: getServiceUnitLabel(service),
         currency: currencySettings.base_currency,
         payment_currency: 'SLE',
         exchange_rate: exchangeRate,
@@ -391,7 +442,7 @@ export async function POST(request: NextRequest) {
         deposit_paid_amount_sle: depositPaidAmountSle,
         deposit_payment_method: body.deposit_payment_method || null,
         deposit_status: depositStatus,
-        created_by: authUserId || body.created_by || null,
+        created_by: adminUserId || authUserId || null,
         notes: body.notes || null,
       })
       .select('*')
@@ -425,9 +476,9 @@ export async function POST(request: NextRequest) {
         tax_amount_sle: 0,
         total_amount: totalAmount,
         total_amount_sle: totalAmountSle,
-        payment_status: depositPaidAmount >= totalAmount ? 'paid' : depositPaidAmount > 0 ? 'partial' : 'pending',
+        payment_status: depositPaidAmountSle >= totalAmountSle ? 'paid' : depositPaidAmountSle > 0 ? 'partial' : 'pending',
         due_date: dueDate.toISOString().slice(0, 10),
-        paid_date: depositPaidAmount >= totalAmount ? new Date().toISOString().slice(0, 10) : null,
+        paid_date: depositPaidAmountSle >= totalAmountSle ? new Date().toISOString().slice(0, 10) : null,
         notes: `Deposit required: ${depositPercentage}% ($${depositRequiredAmount} / SLE ${depositRequiredAmountSle}). Booking ref: ${reference}`,
       })
       .select('*')
@@ -463,10 +514,14 @@ export async function POST(request: NextRequest) {
         .insert({
           invoice_id: invoice.id,
           amount: depositPaidAmountSle,
-          applied_amount: depositPaidAmountSle,
+          applied_amount: Math.min(depositPaidAmountSle, totalAmountSle),
           tip_amount: 0,
           currency: 'SLE',
           payment_method: body.deposit_payment_method || 'cash',
+          payment_channel: body.deposit_payment_method || 'cash',
+          payment_processor: 'Manual',
+          payment_status: 'completed',
+          recorded_by: adminUserId,
           transaction_id: body.transaction_id || null,
           notes: `Deposit payment for booking ${reference}`,
         })
@@ -512,6 +567,7 @@ export async function POST(request: NextRequest) {
           <div style="margin:20px 0;padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px">
             <p><strong>Booking Reference:</strong> ${escapeHtml(reference)}</p>
             <p><strong>Package:</strong> ${escapeHtml(service.name || 'Photography session')}</p>
+            ${price.pricingType === 'per_unit' ? `<p><strong>Edited Photos:</strong> ${price.quantity} at ${escapeHtml(formatSle(price.unitPriceSle))} each</p>` : ''}
             <p><strong>Date:</strong> ${escapeHtml(formatBookingDate(bookingDate))}</p>
             <p><strong>Time:</strong> ${escapeHtml(startTime)} - ${escapeHtml(endTime)}</p>
             <p><strong>Location:</strong> ${escapeHtml(booking.location || 'Studio')}</p>
@@ -547,6 +603,7 @@ export async function POST(request: NextRequest) {
           <p><strong>Email:</strong> ${escapeHtml(customerEmail || 'N/A')}</p>
           <p><strong>Phone:</strong> ${escapeHtml(client.phone || phone || 'N/A')}</p>
           <p><strong>Package:</strong> ${escapeHtml(service.name || 'Photography session')}</p>
+          ${price.pricingType === 'per_unit' ? `<p><strong>Edited Photos:</strong> ${price.quantity} at ${escapeHtml(formatSle(price.unitPriceSle))} each</p>` : ''}
           <p><strong>Date:</strong> ${escapeHtml(formatBookingDate(bookingDate))}</p>
           <p><strong>Time:</strong> ${escapeHtml(startTime)} - ${escapeHtml(endTime)}</p>
           <p><strong>Source:</strong> ${escapeHtml(bookingSource.replace('_', ' '))}</p>
@@ -558,7 +615,7 @@ export async function POST(request: NextRequest) {
     })
 
     await supabase.from('audit_logs').insert({
-      user_id: body.created_by || null,
+      user_id: adminUserId || authUserId || null,
       action: 'create',
       resource_type: 'booking',
       resource_id: booking.id,

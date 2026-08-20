@@ -68,6 +68,11 @@ export default async function PortalBookingsPage() {
                 <div>
                   <h3 className="text-lg font-semibold">{booking.service?.name || 'Photography Session'}</h3>
                   <p className="text-xs text-muted-foreground">{booking.booking_reference || booking.id}</p>
+                  {(booking.pricing_type_snapshot === 'per_unit' || booking.service?.pricing_type === 'per_unit') && (
+                    <p className="mt-1 text-sm font-medium">
+                      {booking.service_quantity || 1} edited photos
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1"><Calendar className="h-4 w-4" />{formatDate(booking.booking_date)}</span>
                     <span className="flex items-center gap-1"><Clock className="h-4 w-4" />{booking.start_time?.slice(0, 5)} - {booking.end_time?.slice(0, 5)}</span>

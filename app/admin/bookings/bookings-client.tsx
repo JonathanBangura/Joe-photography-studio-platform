@@ -18,6 +18,12 @@ import { adminDbMutation } from '@/lib/admin-api-client'
 import { moveBookingWorkflowToStage } from '@/lib/business-logic-client'
 import { convertUsdToSle, formatSle, formatUsd } from '@/lib/currency'
 import { getInvoicePaymentSummary } from '@/lib/payment-summary'
+import {
+  calculateBookingPrice,
+  getServicePricingType,
+  getServiceQuantityRules,
+  getServiceUnitLabel,
+} from '@/lib/booking-pricing'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
@@ -66,6 +72,11 @@ interface ExtendedBooking extends Booking {
   locks_indoor_studio?: boolean | null
   availability_override?: boolean | null
   override_reason?: string | null
+  service_quantity?: number | null
+  unit_price?: number | null
+  unit_price_sle?: number | null
+  pricing_type_snapshot?: 'fixed' | 'per_unit' | null
+  unit_label_snapshot?: string | null
   invoice?: {
     id: string
     total_amount?: number | null
@@ -105,6 +116,19 @@ interface CustomerPaymentLink {
   payment_url: string
   created_at: string | null
   updated_at: string | null
+}
+
+interface BookingPriceAdjustment {
+  id: string
+  previous_quantity: number
+  new_quantity: number
+  previous_total_amount_sle: number
+  new_total_amount_sle: number
+  amount_paid_sle: number
+  deposit_top_up_sle: number
+  outstanding_amount_sle: number
+  reason: string
+  changed_at: string
 }
 
 interface BookingsClientProps {
@@ -216,6 +240,7 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     booking_environment: 'indoor',
     privacy_level: 'shared',
     location: '',
+    service_quantity: '1',
     total_amount: '',
     deposit_percentage: '50',
     deposit_required_amount: '',
@@ -225,12 +250,14 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     notes: '',
     availability_override: false,
     override_reason: '',
+    amendment_reason: '',
   })
 
   const [paymentLink, setPaymentLink] = useState<CustomerPaymentLink | null>(null)
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false)
   const [paymentLinkSaving, setPaymentLinkSaving] = useState(false)
   const [paymentLinkExpiry, setPaymentLinkExpiry] = useState('')
+  const [priceAdjustments, setPriceAdjustments] = useState<BookingPriceAdjustment[]>([])
 
   useEffect(() => {
     setStudioResources(resources)
@@ -264,9 +291,11 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   useEffect(() => {
     if (selectedBooking?.id && isViewOpen) {
       loadPaymentLink(selectedBooking.id)
+      loadPriceAdjustments(selectedBooking.id)
     } else {
       setPaymentLink(null)
       setPaymentLinkExpiry('')
+      setPriceAdjustments([])
     }
   }, [selectedBooking?.id, isViewOpen])
 
@@ -276,6 +305,7 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     email: '',
     phone: '',
     service_id: '',
+    service_quantity: '1',
     staff_id: '',
     resource_id: '',
     booking_environment: 'indoor',
@@ -291,6 +321,18 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
     deposit_payment_method: 'cash',
     transaction_id: '',
   })
+
+  async function loadPriceAdjustments(bookingId: string) {
+    try {
+      const response = await fetch(`/api/admin/bookings/${bookingId}`, { cache: 'no-store' })
+      const result = await response.json()
+      if (response.ok && Array.isArray(result.adjustments)) {
+        setPriceAdjustments(result.adjustments)
+      }
+    } catch (error) {
+      console.error('Booking price history load error:', error)
+    }
+  }
 
 
   async function loadPaymentLink(bookingId: string) {
@@ -359,10 +401,36 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
   })
 
   const selectedService = services.find((service) => service.id === newBooking.service_id)
-  const totalAmount = Number(selectedService?.base_price || 0)
-  const depositRequired = Number(((totalAmount * Number(newBooking.deposit_percentage || 50)) / 100).toFixed(2))
-  const totalAmountSle = convertUsdToSle(totalAmount, currencyRate)
-  const depositRequiredSle = convertUsdToSle(depositRequired, currencyRate)
+  const newBookingPrice = calculateBookingPrice({
+    service: selectedService || { base_price: 0 },
+    quantity: newBooking.service_quantity,
+    depositPercentage: newBooking.deposit_percentage,
+    exchangeRate: currencyRate,
+  })
+  const totalAmount = newBookingPrice.total
+  const depositRequired = newBookingPrice.depositRequired
+  const totalAmountSle = newBookingPrice.totalSle
+  const depositRequiredSle = newBookingPrice.depositRequiredSle
+
+  const editPricingService = selectedBooking?.service
+    ? {
+        ...selectedBooking.service,
+        base_price: selectedBooking.unit_price ?? selectedBooking.service.base_price,
+        base_price_sle: selectedBooking.unit_price_sle ?? selectedBooking.service.base_price_sle,
+        pricing_type: selectedBooking.pricing_type_snapshot ?? selectedBooking.service.pricing_type,
+      }
+    : { base_price: 0 }
+  const editPricePreview = calculateBookingPrice({
+    service: editPricingService,
+    quantity: editBooking.service_quantity,
+    depositPercentage: editBooking.deposit_percentage,
+    exchangeRate: selectedBooking ? getBookingRate(selectedBooking) : currencyRate,
+  })
+  const editPaidSle = selectedBooking && getBookingInvoice(selectedBooking)
+    ? getInvoicePaymentSummary(getBookingInvoice(selectedBooking)!).paidSle
+    : Number(selectedBooking?.deposit_paid_amount_sle || 0)
+  const editOutstandingSle = Math.max(editPricePreview.totalSle - editPaidSle, 0)
+  const editDepositTopUpSle = Math.max(editPricePreview.depositRequiredSle - editPaidSle, 0)
 
   const resetForm = () => {
     setClientMode('new')
@@ -372,6 +440,7 @@ export function BookingsClient({ initialBookings, services, clients, staff, reso
       email: '',
       phone: '',
       service_id: '',
+      service_quantity: '1',
       staff_id: '',
       resource_id: '',
       booking_environment: 'indoor',
@@ -501,6 +570,7 @@ const response = await fetch('/api/bookings', {
         body: JSON.stringify({
           booking_source: 'walk_in',
           service_id: newBooking.service_id,
+          service_quantity: Number(newBooking.service_quantity || 1),
           booking_date: newBooking.booking_date,
           start_time: newBooking.start_time,
           end_time: endTime,
@@ -567,6 +637,7 @@ const response = await fetch('/api/bookings', {
       booking_environment: booking.booking_environment || 'indoor',
       privacy_level: booking.privacy_level || 'shared',
       location: booking.location || '',
+      service_quantity: String(booking.service_quantity || 1),
       total_amount: String(booking.total_amount || ''),
       deposit_percentage: String(booking.deposit_percentage || 50),
       deposit_required_amount: String(booking.deposit_required_amount || 0),
@@ -576,6 +647,7 @@ const response = await fetch('/api/bookings', {
       notes: booking.notes || '',
       availability_override: Boolean(booking.availability_override),
       override_reason: booking.override_reason || '',
+      amendment_reason: '',
     })
     setIsEditOpen(true)
   }
@@ -587,20 +659,16 @@ const response = await fetch('/api/bookings', {
       return
     }
 
-    setIsLoading(true)
     const oldBooking = bookings.find((booking) => booking.id === editBooking.id)
+    const pricingChanged = Number(oldBooking?.service_quantity || 1) !== Number(editBooking.service_quantity || 1)
+      || Number(oldBooking?.deposit_percentage || 50) !== Number(editBooking.deposit_percentage || 50)
 
-    const totalAmountValue = Number(editBooking.total_amount || 0)
-    const depositPercentageValue = Number(editBooking.deposit_percentage || 0)
-    const depositRequiredValue = editBooking.deposit_required_amount
-      ? Number(editBooking.deposit_required_amount)
-      : Number(((totalAmountValue * depositPercentageValue) / 100).toFixed(2))
-    const depositPaidValue = Number(editBooking.deposit_paid_amount || 0)
-    const exchangeRateValue = Number(oldBooking?.exchange_rate || currencyRate || 24)
-    const depositStatusValue = editBooking.deposit_status || (
-      depositPaidValue <= 0 ? 'required' : depositPaidValue >= depositRequiredValue ? 'paid' : 'partial'
-    )
+    if (pricingChanged && editBooking.amendment_reason.trim().length < 3) {
+      toast.error('Please enter a reason for the quantity or deposit change')
+      return
+    }
 
+    setIsLoading(true)
     const payload = {
       booking_date: editBooking.booking_date,
       start_time: editBooking.start_time,
@@ -610,77 +678,46 @@ const response = await fetch('/api/bookings', {
       resource_id: editBooking.resource_id || null,
       booking_environment: editBooking.booking_environment,
       privacy_level: editBooking.privacy_level,
-      locks_indoor_studio: editBooking.booking_environment === 'indoor' && editBooking.privacy_level === 'private',
       location: editBooking.location || null,
-      total_amount: totalAmountValue,
-      total_amount_sle: convertUsdToSle(totalAmountValue, exchangeRateValue),
-      exchange_rate: exchangeRateValue,
-      payment_currency: 'SLE',
-      deposit_percentage: depositPercentageValue,
-      deposit_required_amount: depositRequiredValue,
-      deposit_required_amount_sle: convertUsdToSle(
-        depositRequiredValue,
-        exchangeRateValue,
-      ),
-      deposit_paid_amount: depositPaidValue,
-      deposit_paid_amount_sle: convertUsdToSle(
-        depositPaidValue,
-        exchangeRateValue,
-      ),
-      deposit_payment_method: editBooking.deposit_payment_method || null,
-      deposit_status: depositStatusValue,
+      service_quantity: Number(editBooking.service_quantity || 1),
+      deposit_percentage: Number(editBooking.deposit_percentage || 50),
+      amendment_reason: editBooking.amendment_reason,
       notes: editBooking.notes || null,
       availability_override: editBooking.availability_override,
       override_reason: editBooking.override_reason || null,
-      updated_at: new Date().toISOString(),
     }
 
     try {
-      await adminDbMutation({
-        table: 'bookings',
-        action: 'update',
-        id: editBooking.id,
-        payload,
+      const response = await fetch(`/api/admin/bookings/${editBooking.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Failed to update booking')
+
+      if (editBooking.status === 'confirmed') await moveBookingWorkflowToStage(editBooking.id, 'Shoot Scheduled', 'Booking confirmed')
+      if (editBooking.status === 'completed') await moveBookingWorkflowToStage(editBooking.id, 'Job Closed', 'Booking completed')
+
+      const updatedBooking = result.booking as ExtendedBooking
+      setBookings(bookings.map((booking) => booking.id === editBooking.id ? updatedBooking : booking))
+      setSelectedBooking(updatedBooking)
+      if (result.price_adjustment) {
+        setPriceAdjustments((current) => [result.price_adjustment, ...current])
+      }
+      setIsEditOpen(false)
+      toast.success(
+        result.price_adjustment
+          ? `Quantity and invoice updated. Outstanding: ${formatSle(result.pricing_summary.outstanding_amount_sle)}`
+          : 'Booking updated successfully',
+      )
+      router.refresh()
     } catch (error) {
       console.error('Update booking error:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to update booking')
+    } finally {
       setIsLoading(false)
-      return
     }
-
-    try {
-      await createAuditLog({
-        action: 'update',
-        resource_type: 'booking',
-        resource_id: editBooking.id,
-        old_data: oldBooking || null,
-        new_data: payload,
-      })
-      if (editBooking.status === 'confirmed') await moveBookingWorkflowToStage(editBooking.id, 'Shoot Scheduled', 'Booking confirmed')
-      if (editBooking.status === 'completed') await moveBookingWorkflowToStage(editBooking.id, 'Job Closed', 'Booking completed')
-    } catch (businessError) {
-      console.error('Booking update automation failed:', businessError)
-    }
-
-    const updatedBookings = bookings.map((booking) => {
-      if (booking.id !== editBooking.id) return booking
-      return {
-        ...booking,
-        ...payload,
-        status: payload.status as Booking['status'],
-        staff: staff.find((member) => member.id === payload.staff_id) || null,
-        resource: studioResources.find((resource) => resource.id === payload.resource_id) || null,
-      } as ExtendedBooking
-    })
-
-    setBookings(updatedBookings)
-    const updatedSelected = updatedBookings.find((booking) => booking.id === editBooking.id) || null
-    setSelectedBooking(updatedSelected)
-    setIsEditOpen(false)
-    toast.success('Booking updated successfully')
-    router.refresh()
-    setIsLoading(false)
   }
 
   const handleUpdateStatus = async (bookingId: string, newStatus: string) => {
@@ -733,7 +770,12 @@ const response = await fetch('/api/bookings', {
       return
     }
 
-    await createAuditLog({ action: 'delete', resource_type: 'booking', resource_id: bookingId, old_data: oldBooking || null })
+    await createAuditLog({
+      action: 'delete',
+      resource_type: 'booking',
+      resource_id: bookingId,
+      old_data: oldBooking ? { ...oldBooking } : null,
+    })
     setBookings(bookings.filter((booking) => booking.id !== bookingId))
     toast.success('Booking deleted')
     router.refresh()
@@ -791,9 +833,19 @@ const response = await fetch('/api/bookings', {
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Package *</Label>
-                  <Select value={newBooking.service_id} onValueChange={(value) => setNewBooking({ ...newBooking, service_id: value })}>
+                  <Select
+                    value={newBooking.service_id}
+                    onValueChange={(value) => {
+                      const service = services.find((item) => item.id === value)
+                      setNewBooking({
+                        ...newBooking,
+                        service_id: value,
+                        service_quantity: String(getServiceQuantityRules(service).minimum),
+                      })
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select package" /></SelectTrigger>
-                    <SelectContent>{services.map((service) => <SelectItem key={service.id} value={service.id}>{service.name} - {formatUsd(Number(service.base_price || 0))} / {formatSle(convertUsdToSle(Number(service.base_price || 0), currencyRate))}</SelectItem>)}</SelectContent>
+                    <SelectContent>{services.map((service) => <SelectItem key={service.id} value={service.id}>{service.name} - {formatUsd(Number(service.base_price || 0))} / {formatSle(Number(service.base_price_sle || convertUsdToSle(Number(service.base_price || 0), currencyRate)))}{getServicePricingType(service) === 'per_unit' ? ` per ${getServiceUnitLabel(service)}` : ''}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
@@ -804,6 +856,32 @@ const response = await fetch('/api/bookings', {
                   </Select>
                 </div>
               </div>
+
+              {selectedService && getServicePricingType(selectedService) === 'per_unit' && (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                  <div className="grid gap-4 md:grid-cols-2 md:items-end">
+                    <div className="space-y-2">
+                      <Label htmlFor="new-service-quantity">Number of Edited Photos</Label>
+                      <Input
+                        id="new-service-quantity"
+                        type="number"
+                        min={getServiceQuantityRules(selectedService).minimum}
+                        max={getServiceQuantityRules(selectedService).maximum}
+                        step={getServiceQuantityRules(selectedService).step}
+                        value={newBooking.service_quantity}
+                        onChange={(event) => setNewBooking({ ...newBooking, service_quantity: event.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Live total</p>
+                      <p className="text-xl font-semibold">{formatSle(totalAmountSle)} ({formatUsd(totalAmount)})</p>
+                      <p className="text-xs text-muted-foreground">
+                        {newBooking.service_quantity || 0} × {formatSle(newBookingPrice.unitPriceSle)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-lg border p-4 space-y-4">
                 <div className="font-medium">Studio Availability Rules</div>
@@ -987,7 +1065,12 @@ const response = await fetch('/api/bookings', {
                   {filteredBookings.map((booking) => (
                     <TableRow key={booking.id}>
                       <TableCell><div><p className="font-medium">{getClientName(booking.client)}</p><p className="text-xs text-muted-foreground">{getClientEmail(booking.client) || booking.booking_reference}</p></div></TableCell>
-                      <TableCell>{booking.service?.name || 'N/A'}</TableCell>
+                      <TableCell>
+                        {booking.service?.name || 'N/A'}
+                        {(booking.pricing_type_snapshot === 'per_unit' || booking.service?.pricing_type === 'per_unit') && (
+                          <p className="text-xs text-muted-foreground">{booking.service_quantity || 1} edited photos</p>
+                        )}
+                      </TableCell>
                       <TableCell><div><p className="font-medium">{new Date(booking.booking_date).toLocaleDateString()}</p><p className="text-xs text-muted-foreground">{booking.start_time?.slice(0, 5)} • {booking.staff?.full_name || 'Unassigned'}</p></div></TableCell>
                       <TableCell><span className="capitalize text-xs px-2 py-1 rounded bg-muted">{(booking.booking_source || 'online').replace('_', ' ')}</span></TableCell>
                       <TableCell><div className="space-y-1"><span className={`px-2 py-1 rounded text-xs font-medium capitalize ${depositColors[booking.deposit_status || 'required']}`}>{booking.deposit_status || 'required'}</span><p className="text-xs text-muted-foreground">{formatSle(getBookingDepositPaidSle(booking))} / {formatSle(getBookingDepositRequiredSle(booking))}</p></div></TableCell>
@@ -1031,6 +1114,11 @@ const response = await fetch('/api/bookings', {
                 <div className="rounded-lg border p-4 space-y-2">
                   <h3 className="font-semibold">Package</h3>
                   <p className="font-medium">{selectedBooking.service?.name || 'N/A'}</p>
+                  {(selectedBooking.pricing_type_snapshot === 'per_unit' || selectedBooking.service?.pricing_type === 'per_unit') && (
+                    <p className="text-sm text-muted-foreground">
+                      {selectedBooking.service_quantity || 1} edited photos × {formatSle(Number(selectedBooking.unit_price_sle || Number(selectedBooking.unit_price || selectedBooking.service?.base_price || 0) * getBookingRate(selectedBooking)))}
+                    </p>
+                  )}
                   <p className="text-sm text-muted-foreground">
                     Total: {formatSle(getBookingTotalSle(selectedBooking))}
                   </p>
@@ -1095,7 +1183,32 @@ const response = await fetch('/api/bookings', {
                 )}
               </div>
 
-
+              {priceAdjustments.length > 0 && (
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div>
+                    <h3 className="font-semibold">Quantity & Price History</h3>
+                    <p className="text-xs text-muted-foreground">Every financial amendment is retained for accountability.</p>
+                  </div>
+                  <div className="space-y-3">
+                    {priceAdjustments.map((adjustment) => (
+                      <div key={adjustment.id} className="rounded-md bg-muted/50 p-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-medium">
+                            {adjustment.previous_quantity} → {adjustment.new_quantity} edited photos
+                          </p>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(adjustment.changed_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-muted-foreground">
+                          {formatSle(adjustment.previous_total_amount_sle)} → {formatSle(adjustment.new_total_amount_sle)} · Outstanding {formatSle(adjustment.outstanding_amount_sle)}
+                        </p>
+                        <p className="mt-1">Reason: {adjustment.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-lg border p-4 space-y-4">
                 <div className="flex items-start justify-between gap-3">
@@ -1290,33 +1403,53 @@ const response = await fetch('/api/bookings', {
               {editBooking.availability_override && <Input placeholder="Override reason" value={editBooking.override_reason} onChange={(e) => setEditBooking({ ...editBooking, override_reason: e.target.value })} />}
             </div>
 
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="space-y-2"><Label>Total Amount (USD)</Label><Input type="number" value={editBooking.total_amount} onChange={(e) => setEditBooking({ ...editBooking, total_amount: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Deposit %</Label><Input type="number" value={editBooking.deposit_percentage} onChange={(e) => setEditBooking({ ...editBooking, deposit_percentage: e.target.value })} /></div>
-              <div className="space-y-2"><Label>Deposit Required (USD)</Label><Input type="number" value={editBooking.deposit_required_amount} onChange={(e) => setEditBooking({ ...editBooking, deposit_required_amount: e.target.value })} /></div>
-            </div>
-
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Deposit Paid (USD)</Label>
-                <Input type="number" value={editBooking.deposit_paid_amount} readOnly />
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-4">
+              <div>
+                <h3 className="font-medium">Quantity & Automatic Pricing</h3>
                 <p className="text-xs text-muted-foreground">
-                  Record new payments from the invoice to keep the ledger synchronized.
+                  Changing the quantity recalculates the booking, invoice, deposit and balance. Existing payments are never deleted.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label>Deposit Status</Label>
-                <Select value={editBooking.deposit_status} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_status: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="required">Required</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="waived">Waived</SelectItem></SelectContent>
-                </Select>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-service-quantity">Number of Edited Photos</Label>
+                  <Input
+                    id="edit-service-quantity"
+                    type="number"
+                    min={getServiceQuantityRules(editPricingService).minimum}
+                    max={getServiceQuantityRules(editPricingService).maximum}
+                    step={getServiceQuantityRules(editPricingService).step}
+                    value={editBooking.service_quantity}
+                    disabled={getServicePricingType(editPricingService) === 'fixed'}
+                    onChange={(event) => setEditBooking({ ...editBooking, service_quantity: event.target.value })}
+                  />
+                  {getServicePricingType(editPricingService) === 'fixed' && (
+                    <p className="text-xs text-muted-foreground">This service uses a fixed package price.</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Deposit Requirement</Label>
+                  <Select value={editBooking.deposit_percentage} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_percentage: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="30">30%</SelectItem><SelectItem value="50">50%</SelectItem></SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-md bg-background p-3"><span className="text-muted-foreground">New Total</span><p className="font-semibold">{formatSle(editPricePreview.totalSle)}</p></div>
+                <div className="rounded-md bg-background p-3"><span className="text-muted-foreground">Already Paid</span><p className="font-semibold">{formatSle(editPaidSle)}</p></div>
+                <div className="rounded-md bg-background p-3"><span className="text-muted-foreground">Deposit Top-up</span><p className="font-semibold">{formatSle(editDepositTopUpSle)}</p></div>
+                <div className="rounded-md bg-background p-3"><span className="text-muted-foreground">Outstanding</span><p className="font-semibold">{formatSle(editOutstandingSle)}</p></div>
               </div>
               <div className="space-y-2">
-                <Label>Payment Method</Label>
-                <Select value={editBooking.deposit_payment_method} onValueChange={(value) => setEditBooking({ ...editBooking, deposit_payment_method: value })}>
-                  <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                  <SelectContent><SelectItem value="cash">Cash</SelectItem><SelectItem value="vult_mastercard">Vult Mastercard</SelectItem><SelectItem value="orange_money">Orange Money</SelectItem><SelectItem value="afrimoney">Afrimoney</SelectItem><SelectItem value="bank_transfer">Bank Transfer</SelectItem></SelectContent>
-                </Select>
+                <Label htmlFor="amendment-reason">Reason for Quantity/Price Change</Label>
+                <Textarea
+                  id="amendment-reason"
+                  value={editBooking.amendment_reason}
+                  onChange={(event) => setEditBooking({ ...editBooking, amendment_reason: event.target.value })}
+                  placeholder="Example: Client increased the order from 5 to 10 edited photos at the studio."
+                />
+                <p className="text-xs text-muted-foreground">Required when quantity or deposit percentage changes; saved in the audit history.</p>
               </div>
             </div>
 
