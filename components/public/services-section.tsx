@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, Camera, Heart, Clock, Award, Sparkles, Users, Building2, Package, Baby } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { defaultCurrencySettings, formatDisplayPrice, type CurrencySettings } from '@/lib/currency'
+import { defaultCurrencySettings, formatDisplayAmounts, type CurrencySettings } from '@/lib/currency'
+import { getServicePricingType, getServiceUnitLabel } from '@/lib/booking-pricing'
 
 type PublicService = {
   id: string
@@ -13,18 +14,12 @@ type PublicService = {
   description: string | null
   session_type: string
   base_price: number
+  base_price_sle?: number | null
   duration_minutes: number
   includes: string[] | null
+  pricing_type?: 'fixed' | 'per_unit' | null
+  unit_label?: string | null
 }
-
-const fallbackServices: PublicService[] = [
-  { id: 'wedding', name: 'Wedding Photography', description: 'Capture every magical moment of your special day with our comprehensive wedding photography packages.', session_type: 'wedding', base_price: 2500, duration_minutes: 600, includes: [] },
-  { id: 'portrait', name: 'Portrait Sessions', description: 'Professional portrait photography for individuals, couples, or small groups in studio or on location.', session_type: 'portrait', base_price: 350, duration_minutes: 120, includes: [] },
-  { id: 'event', name: 'Event Coverage', description: 'Document your corporate events, parties, and celebrations with professional photography.', session_type: 'event', base_price: 800, duration_minutes: 240, includes: [] },
-  { id: 'product', name: 'Product Photography', description: 'High-quality product images for e-commerce, catalogs, and marketing materials.', session_type: 'product', base_price: 150, duration_minutes: 60, includes: [] },
-  { id: 'family', name: 'Family Sessions', description: "Create lasting memories with beautiful family portraits that you'll treasure for generations.", session_type: 'family', base_price: 450, duration_minutes: 90, includes: [] },
-  { id: 'corporate', name: 'Corporate & Headshots', description: 'Professional headshots and corporate photography to elevate your business image.', session_type: 'corporate', base_price: 250, duration_minutes: 30, includes: [] },
-]
 
 const features = [
   { icon: Camera, title: 'Premium Equipment', description: 'State-of-the-art cameras and lighting for exceptional quality.' },
@@ -44,12 +39,13 @@ function getServiceIcon(service: PublicService) {
 }
 
 function getServiceHref(service: PublicService) {
-  return `/services#${String(service.session_type || service.id).toLowerCase()}`
+  return `/services#service-${service.id}`
 }
 
 export function ServicesSection() {
-  const [services, setServices] = useState<PublicService[]>(fallbackServices)
+  const [services, setServices] = useState<PublicService[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [currencySettings, setCurrencySettings] = useState<CurrencySettings>(defaultCurrencySettings)
 
   useEffect(() => {
@@ -58,11 +54,11 @@ export function ServicesSection() {
         const response = await fetch('/api/public/services', { cache: 'no-store' })
         const result = await response.json()
 
-        if (response.ok && Array.isArray(result.services) && result.services.length > 0) {
-          setServices(result.services)
-        }
+        if (!response.ok) throw new Error(result.error || 'Unable to load services')
+        setServices(Array.isArray(result.services) ? result.services : [])
       } catch (error) {
         console.error('Homepage services load failed:', error)
+        setLoadError(true)
       } finally {
         setLoading(false)
       }
@@ -101,20 +97,37 @@ export function ServicesSection() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
-          {visibleServices.map((service, index) => {
+          {loading && [0, 1, 2].map((item) => (
+            <Card key={item} className="h-56 animate-pulse border-border bg-card">
+              <CardContent className="p-6">
+                <div className="mb-5 h-12 w-12 rounded-xl bg-muted" />
+                <div className="mb-3 h-6 w-2/3 rounded bg-muted" />
+                <div className="mb-2 h-4 w-full rounded bg-muted" />
+                <div className="h-4 w-4/5 rounded bg-muted" />
+              </CardContent>
+            </Card>
+          ))}
+
+          {!loading && visibleServices.map((service) => {
             const Icon = getServiceIcon(service)
+            const localPrice = Number(service.base_price_sle || service.base_price * currencySettings.usd_to_sle_rate)
+            const isPerUnit = getServicePricingType(service) === 'per_unit'
             return (
               <Link key={service.id} href={getServiceHref(service)}>
-                <Card className={`h-full hover-lift bg-card border-border hover:border-primary/50 transition-all duration-300 group ${index === 0 ? 'ring-2 ring-primary/20' : ''}`}>
+                <Card className="h-full hover-lift bg-card border-border hover:border-primary/50 transition-all duration-300 group">
                   <CardContent className="p-6">
-                    {index === 0 && <span className="inline-block px-3 py-1 text-xs font-medium bg-primary/10 text-primary rounded-full mb-4">Most Popular</span>}
                     <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
                       <Icon className="w-6 h-6 text-primary" />
                     </div>
                     <h3 className="font-serif text-xl font-semibold mb-2 group-hover:text-primary transition-colors">{service.name}</h3>
                     <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{service.description}</p>
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-primary">{formatDisplayPrice(service.base_price, currencySettings, 'From ')}</span>
+                      <span className="font-semibold text-primary">
+                        {formatDisplayAmounts(service.base_price, localPrice, currencySettings)}
+                        {isPerUnit && (
+                          <span className="block text-xs font-normal text-muted-foreground">per {getServiceUnitLabel(service)}</span>
+                        )}
+                      </span>
                       <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
                     </div>
                   </CardContent>
@@ -122,6 +135,18 @@ export function ServicesSection() {
               </Link>
             )
           })}
+
+          {!loading && visibleServices.length === 0 && (
+            <Card className="border-dashed md:col-span-2 lg:col-span-3">
+              <CardContent className="py-12 text-center">
+                <Camera className="mx-auto mb-3 h-9 w-9 text-muted-foreground" />
+                <p className="font-semibold">
+                  {loadError ? 'Services are temporarily unavailable.' : 'No active services are available right now.'}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">Please contact JoeStudio or check back shortly.</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-8">

@@ -58,22 +58,40 @@ interface BookingFormProps {
   } | null
   isLoggedIn: boolean
   mode?: 'public' | 'portal'
+  initialServiceId?: string | null
 }
 
-export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFormProps) {
-  const [step, setStep] = useState(1)
+const TIME_SLOTS = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'] as const
+
+function getDefaultBookingEnvironment(service?: Service | null): 'indoor' | 'outdoor' | 'event' {
+  const serviceType = `${service?.name || ''} ${service?.session_type || ''}`.toLowerCase()
+  if (serviceType.includes('outdoor')) return 'outdoor'
+  if (serviceType.includes('event')) return 'event'
+  return 'indoor'
+}
+
+export function BookingForm({ services, clientInfo, mode = 'public', initialServiceId = null }: BookingFormProps) {
+  const preselectedService = services.find((service) => service.id === initialServiceId) || null
+  const [step, setStep] = useState(() => (
+    preselectedService && getServicePricingType(preselectedService) === 'fixed' ? 2 : 1
+  ))
   const [loading, setLoading] = useState(false)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
   const [checkingSlots, setCheckingSlots] = useState(false)
   const [bookingReference, setBookingReference] = useState<string | null>(null)
   const [paymentLink, setPaymentLink] = useState<string | null>(null)
 
-  const [selectedService, setSelectedService] = useState<Service | null>(null)
-  const [serviceQuantity, setServiceQuantity] = useState(1)
+  const [selectedService, setSelectedService] = useState<Service | null>(preselectedService)
+  const [serviceQuantity, setServiceQuantity] = useState(() => (
+    preselectedService ? getServiceQuantityRules(preselectedService).minimum : 1
+  ))
+  const [showServiceChooser, setShowServiceChooser] = useState(!preselectedService)
   const [selectedDate, setSelectedDate] = useState('')
   const [selectedTime, setSelectedTime] = useState('')
 
-  const [bookingEnvironment, setBookingEnvironment] = useState<'indoor' | 'outdoor' | 'event'>('indoor')
+  const [bookingEnvironment, setBookingEnvironment] = useState<'indoor' | 'outdoor' | 'event'>(() => (
+    getDefaultBookingEnvironment(preselectedService)
+  ))
   const [privacyLevel, setPrivacyLevel] = useState<'shared' | 'private'>('shared')
 
   const [resourceId, setResourceId] = useState('')
@@ -93,8 +111,6 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
   })
 
   const isPortalMode = mode === 'portal'
-
-  const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00']
 
   const bookingPrice = useMemo(
     () => calculateBookingPrice({
@@ -160,7 +176,7 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
 
       const availabilityMap: Record<string, SlotAvailability> = {}
 
-      for (const slot of timeSlots) {
+      for (const slot of TIME_SLOTS) {
         try {
           const params = new URLSearchParams({
             service_id: selectedService.id,
@@ -243,7 +259,7 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
     setErrorMessage(null)
 
     if (step === 1 && !selectedService) {
-      setErrorMessage('Please select a package first.')
+      setErrorMessage('Please select a service first.')
       return false
     }
 
@@ -286,6 +302,15 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
   const chooseService = (service: Service) => {
     setSelectedService(service)
     setServiceQuantity(getServiceQuantityRules(service).minimum)
+    setBookingEnvironment(getDefaultBookingEnvironment(service))
+    setShowServiceChooser(false)
+    setErrorMessage(null)
+  }
+
+  const changeService = () => {
+    setStep(1)
+    setShowServiceChooser(true)
+    setErrorMessage(null)
   }
 
   const handleSubmit = async () => {
@@ -333,6 +358,10 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
     }
   }
 
+  const displayedServices = showServiceChooser || !selectedService
+    ? services
+    : [selectedService]
+
   return (
     <div className="min-h-[80vh] py-20">
       <div className="container max-w-4xl mx-auto px-4">
@@ -355,22 +384,53 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
           </div>
         )}
 
+        {selectedService && step >= 2 && step <= 4 && (
+          <Card className="mb-8 border-primary bg-primary/5 shadow-sm ring-2 ring-primary/20" aria-live="polite">
+            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-full bg-primary p-1 text-primary-foreground">
+                  <Check className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-primary">Selected Service</p>
+                  <h2 className="font-serif text-xl font-bold">{selectedService.name}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDisplayAmounts(bookingPrice.total, bookingPrice.totalSle, currencySettings)}
+                    {getServicePricingType(selectedService) === 'per_unit'
+                      ? ` total for ${serviceQuantity} × ${getServiceUnitLabel(selectedService)}`
+                      : ' package price'}
+                  </p>
+                </div>
+              </div>
+              <Button type="button" variant="outline" onClick={changeService}>
+                Change Service
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {step === 1 && (
           <div className="space-y-8">
             <div className="text-center">
-              <h1 className="text-3xl md:text-4xl font-bold mb-4">Choose Your Package</h1>
+              <h1 className="text-3xl md:text-4xl font-bold mb-4">
+                {showServiceChooser || !selectedService ? 'Choose Your Service' : 'Your Service Is Selected'}
+              </h1>
               <p className="text-muted-foreground max-w-2xl mx-auto">
-                {isPortalMode
-                  ? 'Select a photography package. This booking will be added to your client portal account.'
-                  : 'Select a photography package. You can submit your booking without creating an account.'}
+                {showServiceChooser || !selectedService
+                  ? isPortalMode
+                    ? 'Select an available service. This booking will be added to your client portal account.'
+                    : 'Select an available service. You can submit your booking without creating an account.'
+                  : getServicePricingType(selectedService) === 'per_unit'
+                    ? 'Confirm the selected service and choose how many edited photos you want.'
+                    : 'Confirm the selected service, then continue to choose your date and time.'}
               </p>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6" role="radiogroup" aria-label="Photography packages">
-              {services.map((service) => (
+            <div className="grid md:grid-cols-2 gap-6" role="radiogroup" aria-label="Available photography services">
+              {displayedServices.map((service) => (
                 <Card
                   key={service.id}
-                  className={`cursor-pointer transition-all hover:border-primary ${selectedService?.id === service.id ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  className={`cursor-pointer transition-all hover:border-primary ${selectedService?.id === service.id ? 'border-primary bg-primary/5 shadow-md ring-2 ring-primary/30' : ''}`}
                   role="radio"
                   aria-checked={selectedService?.id === service.id}
                   tabIndex={0}
@@ -383,6 +443,12 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                   }}
                 >
                   <CardHeader>
+                    {selectedService?.id === service.id && (
+                      <div className="mb-3 flex w-fit items-center gap-2 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">
+                        <Check className="h-3.5 w-3.5" />
+                        Selected Service
+                      </div>
+                    )}
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <CardTitle>{service.name}</CardTitle>
@@ -411,6 +477,16 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
                 </Card>
               ))}
             </div>
+
+            {displayedServices.length === 0 && (
+              <Card className="border-dashed">
+                <CardContent className="py-12 text-center">
+                  <AlertCircle className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                  <p className="font-semibold">No active services are available for booking.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Please contact JoeStudio for assistance.</p>
+                </CardContent>
+              </Card>
+            )}
 
             {selectedService && getServicePricingType(selectedService) === 'per_unit' && (
               <Card className="border-primary/30 bg-primary/5">
@@ -450,9 +526,16 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
             )}
 
             <div className="flex justify-end">
-              <Button onClick={goNext} disabled={!selectedService}>
-                Continue <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row">
+                {selectedService && !showServiceChooser && (
+                  <Button type="button" variant="outline" onClick={() => setShowServiceChooser(true)}>
+                    Change Service
+                  </Button>
+                )}
+                <Button onClick={goNext} disabled={!selectedService}>
+                  Continue <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -542,7 +625,7 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
 
                 {selectedDate && (
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    {timeSlots.map((slot) => {
+                    {TIME_SLOTS.map((slot) => {
                       const status = slotAvailability[slot]
                       const isAvailable = Boolean(status?.available)
                       const isSelected = selectedTime === slot
@@ -682,7 +765,7 @@ export function BookingForm({ services, clientInfo, mode = 'public' }: BookingFo
             <CardContent className="space-y-6">
               <div className="rounded-lg border p-4 space-y-3">
                 <div className="flex justify-between">
-                  <span>Package</span>
+                  <span>Service</span>
                   <strong>{selectedService.name}</strong>
                 </div>
 

@@ -8,36 +8,48 @@ export const metadata = {
   description: 'Schedule your photography session with JoeStudio. Choose from our range of professional photography services.',
 }
 
-export default async function BookingPage() {
+type BookingPageProps = {
+  searchParams: Promise<{ service?: string | string[] }>
+}
+
+export default async function BookingPage({ searchParams }: BookingPageProps) {
   const supabase = await createClient()
 
-  // Get active services
-  const { data: services } = await supabase
-    .from('services')
-    .select('*')
-    .eq('is_active', true)
-    .order('base_price')
+  const [query, servicesResult, userResult] = await Promise.all([
+    searchParams,
+    supabase
+      .from('services')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false }),
+    supabase.auth.getUser(),
+  ])
 
-  // Check if user is logged in
-  const { data: { user } } = await supabase.auth.getUser()
+  const services = servicesResult.data || []
+  const user = userResult.data.user
+  const requestedServiceId = Array.isArray(query.service) ? query.service[0] : query.service
+  const initialServiceId = requestedServiceId && services.some((service) => service.id === requestedServiceId)
+    ? requestedServiceId
+    : null
 
   let clientInfo = null
   if (user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-    
-    const { data: client } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('profile_id', user.id)
-      .single()
+    const [profileResult, clientResult] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('clients')
+        .select('*')
+        .eq('profile_id', user.id)
+        .maybeSingle(),
+    ])
 
     clientInfo = {
-      profile,
-      client,
+      profile: profileResult.data,
+      client: clientResult.data,
     }
   }
 
@@ -51,6 +63,7 @@ export default async function BookingPage() {
           blockedDates={[]}
           clientInfo={clientInfo}
           isLoggedIn={!!user}
+          initialServiceId={initialServiceId}
         />
       </div>
       <Footer />

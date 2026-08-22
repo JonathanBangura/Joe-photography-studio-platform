@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const supabase = createAdminClient()
@@ -9,11 +11,14 @@ export async function GET() {
       .from('services')
       .select('id,name,description,session_type,base_price,base_price_sle,duration_minutes,includes,pricing_type,unit_label,minimum_quantity,maximum_quantity,quantity_step,is_active,created_at,updated_at')
       .eq('is_active', true)
-      .order('base_price', { ascending: false })
+      .order('created_at', { ascending: false })
 
     if (error) throw error
 
-    return NextResponse.json({ services: data || [] })
+    return NextResponse.json(
+      { services: data || [] },
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } },
+    )
   } catch (error) {
     console.error('Public services load error:', error)
     return NextResponse.json(

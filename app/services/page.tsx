@@ -6,7 +6,10 @@ import { Check, Camera, Heart, Users, Building2, Package, Baby, Sparkles, Calend
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getPublicBusinessSettings } from '@/lib/business-settings-public'
-import { formatDisplayPrice } from '@/lib/currency'
+import { formatDisplayAmounts, normalizeCurrencySettings } from '@/lib/currency'
+import { getServicePricingType, getServiceUnitLabel } from '@/lib/booking-pricing'
+
+export const dynamic = 'force-dynamic'
 
 type Service = {
   id: string
@@ -14,43 +17,27 @@ type Service = {
   description: string | null
   session_type: string
   base_price: number
+  base_price_sle: number | null
   duration_minutes: number
   includes: string[] | null
+  pricing_type: 'fixed' | 'per_unit' | null
+  unit_label: string | null
 }
 
-const fallbackServices: Service[] = [
-  {
-    id: 'wedding',
-    name: 'Wedding Photography',
-    description: 'Capture every magical moment of your special day with our comprehensive wedding photography packages.',
-    session_type: 'wedding',
-    base_price: 2500,
-    duration_minutes: 600,
-    includes: [
-      'Full day coverage (up to 10 hours)',
-      'Second photographer included',
-      'Engagement session',
-      '500+ edited digital images',
-      'Online gallery for sharing',
-      'Wedding album design consultation',
-    ],
-  },
-]
-
-async function getServices(): Promise<Service[]> {
+async function getServices(): Promise<{ services: Service[]; loadError: boolean }> {
   try {
     const supabase = createAdminClient()
     const { data, error } = await supabase
       .from('services')
-      .select('id,name,description,session_type,base_price,duration_minutes,includes')
+      .select('id,name,description,session_type,base_price,base_price_sle,duration_minutes,includes,pricing_type,unit_label')
       .eq('is_active', true)
-      .order('base_price', { ascending: false })
+      .order('created_at', { ascending: false })
 
     if (error) throw error
-    return (data || []) as Service[]
+    return { services: (data || []) as Service[], loadError: false }
   } catch (error) {
     console.error('Services page load failed:', error)
-    return fallbackServices
+    return { services: [], loadError: true }
   }
 }
 
@@ -66,8 +53,11 @@ function getServiceIcon(service: Service) {
 }
 
 export default async function ServicesPage() {
-  const services = await getServices()
-  const settings = await getPublicBusinessSettings()
+  const [{ services, loadError }, settings] = await Promise.all([
+    getServices(),
+    getPublicBusinessSettings(),
+  ])
+  const currencySettings = normalizeCurrencySettings(settings)
 
   return (
     <div className="min-h-screen bg-background">
@@ -88,41 +78,73 @@ export default async function ServicesPage() {
 
         <section className="py-12 px-4 pb-24">
           <div className="container mx-auto max-w-7xl">
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {services.map((service) => {
-                const Icon = getServiceIcon(service)
-                const features = Array.isArray(service.includes) ? service.includes : []
+            {services.length > 0 ? (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {services.map((service) => {
+                  const Icon = getServiceIcon(service)
+                  const features = Array.isArray(service.includes) ? service.includes : []
+                  const localPrice = Number(service.base_price_sle || service.base_price * currencySettings.usd_to_sle_rate)
+                  const isPerUnit = getServicePricingType(service) === 'per_unit'
 
-                return (
-                  <Card key={service.id} id={String(service.session_type || service.id).toLowerCase()} className="bg-card/50 border-border/50 hover:border-primary/50 transition-colors group">
-                    <CardHeader>
-                      <div className="p-3 rounded-xl bg-primary/10 w-fit mb-4 group-hover:bg-primary/20 transition-colors">
-                        <Icon className="h-6 w-6 text-primary" />
-                      </div>
-                      <CardTitle className="text-xl font-serif">{service.name}</CardTitle>
-                      <CardDescription className="text-pretty">{service.description}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-2xl font-bold text-primary mb-6">{formatDisplayPrice(service.base_price, settings, 'Starting at ')}</p>
-                      <ul className="space-y-3 mb-6">
-                        {features.map((feature) => (
-                          <li key={feature} className="flex items-start gap-3 text-sm">
-                            <Check className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
-                            <span className="text-muted-foreground">{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      <Button asChild className="w-full" variant="outline">
-                        <Link href="/booking">
-                          <Calendar className="mr-2 h-4 w-4" />
-                          Book This Package
-                        </Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
+                  return (
+                    <Card
+                      key={service.id}
+                      id={`service-${service.id}`}
+                      className="flex h-full flex-col bg-card/50 border-border/50 hover:border-primary/50 transition-colors group"
+                    >
+                      <CardHeader>
+                        <div className="p-3 rounded-xl bg-primary/10 w-fit mb-4 group-hover:bg-primary/20 transition-colors">
+                          <Icon className="h-6 w-6 text-primary" />
+                        </div>
+                        <CardTitle className="text-xl font-serif">{service.name}</CardTitle>
+                        <CardDescription className="text-pretty">{service.description}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex flex-1 flex-col">
+                        <div className="mb-6">
+                          <p className="text-2xl font-bold text-primary">
+                            {formatDisplayAmounts(service.base_price, localPrice, currencySettings, isPerUnit ? '' : 'Package price: ')}
+                          </p>
+                          {isPerUnit && (
+                            <p className="text-sm text-muted-foreground">per {getServiceUnitLabel(service)}</p>
+                          )}
+                          <p className="mt-2 text-sm text-muted-foreground">{service.duration_minutes} minutes</p>
+                        </div>
+                        {features.length > 0 && (
+                          <ul className="space-y-3 mb-6">
+                            {features.map((feature) => (
+                              <li key={feature} className="flex items-start gap-3 text-sm">
+                                <Check className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
+                                <span className="text-muted-foreground">{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <Button asChild className="mt-auto w-full">
+                          <Link href={`/booking?service=${encodeURIComponent(service.id)}`}>
+                            <Calendar className="mr-2 h-4 w-4" />
+                            Book This Service
+                          </Link>
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-16 text-center">
+                  <Camera className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                  <h2 className="font-serif text-2xl font-semibold">
+                    {loadError ? 'Services are temporarily unavailable' : 'No services are available right now'}
+                  </h2>
+                  <p className="mx-auto mt-2 max-w-xl text-muted-foreground">
+                    {loadError
+                      ? 'Please refresh the page or contact JoeStudio for assistance.'
+                      : 'The studio is currently updating its service list. Please check back shortly.'}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </section>
 
