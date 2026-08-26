@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server'
-import { isEmailConfigured, sendEmail } from '@/lib/mail'
+import {
+  isEmailConfigured,
+  parseEmailList,
+  sendEmail,
+  uniqueEmails,
+} from '@/lib/mail'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 function escapeHtml(value: string) {
@@ -71,12 +76,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
-    const studioEmail =
-      process.env.STUDIO_NOTIFICATION_EMAIL ||
-      (await getSetting(supabase, 'email')) ||
-      process.env.EMAIL_FROM ||
-      process.env.SMTP_USER ||
-      ''
+    const studioEmails = uniqueEmails([
+      ...parseEmailList(process.env.STUDIO_NOTIFICATION_EMAILS),
+      ...parseEmailList(process.env.STUDIO_NOTIFICATION_EMAIL),
+      await getSetting(supabase, 'email'),
+      process.env.EMAIL_REPLY_TO,
+    ])
 
     let emailNotification: any = null
 
@@ -84,14 +89,14 @@ export async function POST(request: Request) {
       emailNotification = {
         sent: false,
         skipped: true,
-        reason:
-          'Email service is not configured. Add SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM in Vercel.',
+        reason: 'Email service is not configured. Add RESEND_API_KEY and EMAIL_FROM in Vercel.',
       }
-    } else if (studioEmail) {
+    } else if (studioEmails.length) {
       try {
         const result = await sendEmail({
-          to: studioEmail,
+          to: studioEmails,
           subject: `New website inquiry${subject ? `: ${subject}` : ''}`,
+          idempotencyKey: `joestudio-contact-${data.id}`,
           html: `
             <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
               <h2>New Website Inquiry</h2>
@@ -128,7 +133,7 @@ export async function POST(request: Request) {
       resource_id: data.id,
       new_data: {
         submission: data,
-        studio_email: studioEmail || null,
+        studio_emails: studioEmails,
         notification: emailNotification,
       },
       ip_address: request.headers.get('x-forwarded-for'),

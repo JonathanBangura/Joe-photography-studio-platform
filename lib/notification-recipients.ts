@@ -74,6 +74,6 @@ export async function getInternalNotificationRecipients(
     ...envRecipients,
     ...adminRecipients,
     await getBusinessEmail(supabase),
-    process.env.SMTP_USER,
+    process.env.EMAIL_REPLY_TO,
   ])
 }
