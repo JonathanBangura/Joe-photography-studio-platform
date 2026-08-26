@@ -555,6 +555,7 @@ export async function POST(request: NextRequest) {
     const customerEmailNotification = await sendEmailSafely({
       to: customerEmail,
       subject: `JoeStudio booking received: ${reference}`,
+      idempotencyKey: `joestudio-booking-${booking.id}-customer`,
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
           <h2>Your JoeStudio booking has been received</h2>
@@ -595,6 +596,7 @@ export async function POST(request: NextRequest) {
     const internalEmailNotification = await sendEmailSafely({
       to: internalRecipients,
       subject: `New booking received: ${reference}`,
+      idempotencyKey: `joestudio-booking-${booking.id}-internal`,
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
           <h2>New Booking Received</h2>

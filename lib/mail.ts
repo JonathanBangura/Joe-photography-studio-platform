@@ -1,33 +1,54 @@
-import nodemailer from 'nodemailer'
-
 type SendEmailOptions = {
   to: string | string[]
   subject: string
   html: string
   text?: string
   replyTo?: string
+  idempotencyKey?: string
 }
 
-function getSmtpConfig() {
-  const host = process.env.SMTP_HOST
-  const port = Number(process.env.SMTP_PORT || 465)
-  const user = process.env.SMTP_USER
-  const pass = process.env.SMTP_PASS
-  const from = process.env.EMAIL_FROM || user
+type ResendSuccessResponse = {
+  id?: string
+}
 
-  if (!host || !user || !pass || !from) {
+type ResendErrorResponse = {
+  message?: string
+  name?: string
+}
+
+const RESEND_EMAILS_ENDPOINT = 'https://api.resend.com/emails'
+const MAX_RESEND_RECIPIENTS = 50
+
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY?.trim()
+  const from = process.env.EMAIL_FROM?.trim()
+  const replyTo = process.env.EMAIL_REPLY_TO?.trim()
+
+  if (!apiKey || !from) {
     return null
   }
 
   return {
-    host,
-    port,
-    secure: port === 465,
-    auth: {
-      user,
-      pass,
-    },
+    apiKey,
     from,
+    replyTo,
+  }
+}
+
+function getEmailConfigurationError() {
+  return 'Email service is not configured. Add RESEND_API_KEY and EMAIL_FROM in Vercel.'
+}
+
+function normalizeRecipients(to: string | string[]) {
+  const values = Array.isArray(to) ? to : [to]
+  return uniqueEmails(values)
+}
+
+async function readResendResponse(response: Response) {
+  try {
+    return (await response.json()) as ResendSuccessResponse & ResendErrorResponse
+  } catch {
+    return null
   }
 }
 
@@ -56,33 +77,73 @@ export function uniqueEmails(values: Array<string | null | undefined>) {
 }
 
 export function isEmailConfigured() {
-  return Boolean(getSmtpConfig())
+  return Boolean(getResendConfig())
 }
 
-export async function sendEmail({ to, subject, html, text, replyTo }: SendEmailOptions) {
-  const config = getSmtpConfig()
+export async function sendEmail({
+  to,
+  subject,
+  html,
+  text,
+  replyTo,
+  idempotencyKey,
+}: SendEmailOptions) {
+  const config = getResendConfig()
 
   if (!config) {
-    throw new Error(
-      'Email service is not configured. Add SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM in Vercel.',
-    )
+    throw new Error(getEmailConfigurationError())
   }
 
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.secure,
-    auth: config.auth,
+  const recipients = normalizeRecipients(to)
+
+  if (!recipients.length) {
+    throw new Error('No email recipient was provided.')
+  }
+
+  if (recipients.length > MAX_RESEND_RECIPIENTS) {
+    throw new Error(`Resend accepts a maximum of ${MAX_RESEND_RECIPIENTS} recipients per email.`)
+  }
+
+  if (idempotencyKey && idempotencyKey.length > 256) {
+    throw new Error('The email idempotency key cannot exceed 256 characters.')
+  }
+
+  const resolvedReplyTo = replyTo?.trim() || config.replyTo
+  const response = await fetch(RESEND_EMAILS_ENDPOINT, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
+    body: JSON.stringify({
+      from: config.from,
+      to: recipients,
+      subject,
+      html,
+      ...(text !== undefined ? { text } : {}),
+      ...(resolvedReplyTo ? { reply_to: resolvedReplyTo } : {}),
+    }),
   })
 
-  return transporter.sendMail({
-    from: config.from,
-    to,
-    subject,
-    html,
-    text,
-    replyTo,
-  })
+  const result = await readResendResponse(response)
+
+  if (!response.ok) {
+    const reason = result?.message || result?.name || `Resend request failed with status ${response.status}.`
+    throw new Error(`Unable to send email through Resend: ${reason}`)
+  }
+
+  if (!result?.id) {
+    throw new Error('Resend accepted the request but did not return an email ID.')
+  }
+
+  return {
+    messageId: result.id,
+    accepted: recipients,
+    rejected: [] as string[],
+    provider: 'resend' as const,
+  }
 }
 
 export async function sendEmailSafely(options: SendEmailOptions) {
@@ -100,8 +161,7 @@ export async function sendEmailSafely(options: SendEmailOptions) {
     return {
       sent: false,
       skipped: true,
-      reason:
-        'Email service is not configured. Add SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM in Vercel.',
+      reason: getEmailConfigurationError(),
     }
   }
 
@@ -117,6 +177,7 @@ export async function sendEmailSafely(options: SendEmailOptions) {
       messageId: result.messageId,
       accepted: result.accepted,
       rejected: result.rejected,
+      provider: result.provider,
     }
   } catch (error) {
     return {
