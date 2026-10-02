@@ -76,7 +76,6 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
     preselectedService && getServicePricingType(preselectedService) === 'fixed' ? 2 : 1
   ))
   const [loading, setLoading] = useState(false)
-  const [checkingAvailability, setCheckingAvailability] = useState(false)
   const [checkingSlots, setCheckingSlots] = useState(false)
   const [bookingReference, setBookingReference] = useState<string | null>(null)
   const [paymentLink, setPaymentLink] = useState<string | null>(null)
@@ -94,8 +93,6 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
   ))
   const [privacyLevel, setPrivacyLevel] = useState<'shared' | 'private'>('shared')
 
-  const [resourceId, setResourceId] = useState('')
-  const [resources, setResources] = useState<StudioResource[]>([])
   const [slotAvailability, setSlotAvailability] = useState<Record<string, SlotAvailability>>({})
 
   const [depositPercentage, setDepositPercentage] = useState<'30' | '50'>('50')
@@ -125,10 +122,6 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
   const depositAmount = bookingPrice.depositRequired
   const depositAmountSle = bookingPrice.depositRequiredSle
   const balanceAmount = bookingPrice.balanceAfterDeposit
-
-
-  const selectedResource = resources.find((resource) => resource.id === resourceId)
-  const availableResources = resources.filter((resource) => resource.available)
 
   const tomorrow = new Date()
   tomorrow.setDate(tomorrow.getDate() + 1)
@@ -161,11 +154,8 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
   }, [bookingEnvironment])
 
   useEffect(() => {
-    setResourceId('')
-    setResources([])
-  }, [bookingEnvironment, privacyLevel, selectedService?.id, selectedDate, selectedTime])
+    let cancelled = false
 
-  useEffect(() => {
     async function loadSlotAvailability() {
       if (!selectedService?.id || !selectedDate) {
         setSlotAvailability({})
@@ -174,9 +164,7 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
 
       setCheckingSlots(true)
 
-      const availabilityMap: Record<string, SlotAvailability> = {}
-
-      for (const slot of TIME_SLOTS) {
+      const availabilityEntries = await Promise.all(TIME_SLOTS.map(async (slot) => {
         try {
           const params = new URLSearchParams({
             service_id: selectedService.id,
@@ -190,70 +178,42 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
           const result = await response.json()
 
           if (!response.ok) {
-            availabilityMap[slot] = {
+            return [slot, {
               available: false,
               reason: result.error || 'Unavailable',
-            }
-            continue
+            }] as const
           }
 
           const hasAvailableResource = Array.isArray(result.resources)
             ? result.resources.some((resource: StudioResource) => resource.available)
             : false
 
-          availabilityMap[slot] = {
+          return [slot, {
             available: hasAvailableResource,
             reason: hasAvailableResource
               ? 'Available'
               : result.reason || 'No studio resource available',
-          }
+          }] as const
         } catch {
-          availabilityMap[slot] = {
+          return [slot, {
             available: false,
             reason: 'Unable to check slot',
-          }
+          }] as const
         }
-      }
+      }))
 
-      setSlotAvailability(availabilityMap)
-      setCheckingSlots(false)
+      if (!cancelled) {
+        setSlotAvailability(Object.fromEntries(availabilityEntries))
+        setCheckingSlots(false)
+      }
     }
 
     loadSlotAvailability()
-  }, [selectedDate, selectedService?.id, bookingEnvironment, privacyLevel])
 
-  useEffect(() => {
-    async function checkAvailability() {
-      if (!selectedService?.id || !selectedDate || !selectedTime) return
-
-      setCheckingAvailability(true)
-      setErrorMessage(null)
-
-      try {
-        const params = new URLSearchParams({
-          service_id: selectedService.id,
-          date: selectedDate,
-          start_time: selectedTime,
-          booking_environment: bookingEnvironment,
-          privacy_level: privacyLevel,
-        })
-
-        const response = await fetch(`/api/availability?${params.toString()}`)
-        const result = await response.json()
-
-        if (!response.ok) throw new Error(result.error || 'Unable to check availability')
-
-        setResources(result.resources || [])
-      } catch (error) {
-        setResources([])
-        setErrorMessage(error instanceof Error ? error.message : 'Unable to check availability')
-      } finally {
-        setCheckingAvailability(false)
-      }
+    return () => {
+      cancelled = true
     }
-
-    checkAvailability()
-  }, [selectedService?.id, selectedDate, selectedTime, bookingEnvironment, privacyLevel])
+  }, [selectedDate, selectedService?.id, bookingEnvironment, privacyLevel])
 
   const validateStep = () => {
     setErrorMessage(null)
@@ -272,18 +232,13 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
       }
     }
 
-    if (step === 2 && (!selectedDate || !selectedTime || !bookingEnvironment || !privacyLevel || !resourceId)) {
-      setErrorMessage('Please select date, time, booking type and an available resource.')
+    if (step === 2 && (!selectedDate || !selectedTime || !bookingEnvironment || !privacyLevel)) {
+      setErrorMessage('Please select a booking type, date and available time.')
       return false
     }
 
     if (step === 2 && slotAvailability[selectedTime] && !slotAvailability[selectedTime].available) {
       setErrorMessage(slotAvailability[selectedTime].reason || 'Selected time is not available.')
-      return false
-    }
-
-    if (step === 2 && selectedResource && !selectedResource.available) {
-      setErrorMessage(selectedResource.reason || 'Selected resource is not available.')
       return false
     }
 
@@ -331,7 +286,6 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
           start_time: selectedTime,
           booking_environment: bookingEnvironment,
           privacy_level: privacyLevel,
-          resource_id: resourceId,
           full_name: formData.name,
           email: formData.email,
           phone: formData.phone,
@@ -543,9 +497,9 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
         {step === 2 && (
           <Card>
             <CardHeader>
-              <CardTitle>Select Date, Time & Studio Resource</CardTitle>
+              <CardTitle>Select Date & Time</CardTitle>
               <CardDescription>
-                The studio assigns the photographer internally. Customers only choose session type, time and resource.
+                Choose your session type, preferred date and time. The studio will handle all internal assignments.
               </CardDescription>
             </CardHeader>
 
@@ -603,7 +557,6 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
                   onChange={(e) => {
                     setSelectedDate(e.target.value)
                     setSelectedTime('')
-                    setResourceId('')
                   }}
                 />
               </div>
@@ -636,10 +589,7 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
                           type="button"
                           variant={isSelected ? 'default' : isAvailable ? 'outline' : 'secondary'}
                           disabled={!isAvailable || checkingSlots}
-                          onClick={() => {
-                            setSelectedTime(slot)
-                            setResourceId('')
-                          }}
+                          onClick={() => setSelectedTime(slot)}
                           className="flex items-center justify-between gap-2"
                         >
                           <span>{slot}</span>
@@ -657,39 +607,12 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
                 )}
               </div>
 
-              <div className="space-y-2">
-                <Label>Available Resource</Label>
-                <Select
-                  value={resourceId}
-                  onValueChange={setResourceId}
-                  disabled={!selectedDate || !selectedTime || checkingAvailability}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={checkingAvailability ? 'Checking availability...' : 'Select available resource'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {resources.map((resource) => (
-                      <SelectItem key={resource.id} value={resource.id} disabled={!resource.available}>
-                        {resource.name} {resource.available ? '' : `— ${resource.reason || 'Unavailable'}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {selectedDate && selectedTime && !checkingAvailability && availableResources.length === 0 && (
-                  <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
-                    <AlertCircle className="h-4 w-4 mt-0.5" />
-                    <p>No resource is available for this time. Try another time or contact the studio.</p>
-                  </div>
-                )}
-              </div>
-
               <div className="flex justify-between">
                 <Button variant="outline" onClick={() => setStep(1)}>
                   <ArrowLeft className="w-4 h-4 mr-2" /> Back
                 </Button>
 
-                <Button onClick={goNext} disabled={!resourceId || checkingAvailability}>
+                <Button onClick={goNext} disabled={!selectedDate || !selectedTime || checkingSlots}>
                   Continue <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
@@ -794,13 +717,8 @@ export function BookingForm({ services, clientInfo, mode = 'public', initialServ
                 </div>
 
                 <div className="flex justify-between">
-                  <span>Resource</span>
-                  <strong>{selectedResource?.name}</strong>
-                </div>
-
-                <div className="flex justify-between">
-                  <span>Photographer</span>
-                  <strong>Assigned by studio</strong>
+                  <span>Studio Team</span>
+                  <strong>Assigned internally</strong>
                 </div>
               </div>
 

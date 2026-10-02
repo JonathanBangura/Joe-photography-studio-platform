@@ -171,7 +171,7 @@ async function assertAvailability(params: {
     allowOverride,
   } = params
 
-  if (allowOverride) return
+  if (allowOverride) return resourceId
 
   const { data: resource, error: resourceError } = resourceId
     ? await supabase.from('studio_resources').select('*').eq('id', resourceId).eq('is_active', true).maybeSingle()
@@ -179,8 +179,19 @@ async function assertAvailability(params: {
 
   if (resourceError) throw resourceError
 
-  if (!resourceId && bookingEnvironment !== 'outdoor') {
-    throw new Error('Please select a studio resource for indoor/private bookings.')
+  if (resourceId && !resource) {
+    throw new Error('The selected studio resource is no longer available.')
+  }
+
+  if (resource) {
+    const resourceType = String(resource.type)
+    const isCompatible = bookingEnvironment === 'indoor'
+      ? resourceType === 'indoor' || resourceType === 'desk'
+      : resourceType === bookingEnvironment
+
+    if (!isCompatible) {
+      throw new Error('The selected studio resource does not match this booking type.')
+    }
   }
 
   const { data: overlapping, error } = await supabase
@@ -210,10 +221,40 @@ async function assertAvailability(params: {
     }
   }
 
-  if (resourceId) {
-    const sameResourceCount = existing.filter((booking) => booking.resource_id === resourceId).length
+  let assignedResourceId = resourceId
+
+  if (!assignedResourceId) {
+    const { data: resources, error: resourcesError } = await supabase
+      .from('studio_resources')
+      .select('*')
+      .eq('is_active', true)
+      .order('type')
+      .order('name')
+
+    if (resourcesError) throw resourcesError
+
+    const compatibleResources = (resources || []).filter((candidate) => {
+      const resourceType = String(candidate.type)
+      if (bookingEnvironment === 'indoor') return resourceType === 'indoor' || resourceType === 'desk'
+      return resourceType === bookingEnvironment
+    })
+
+    const availableResource = compatibleResources.find((candidate) => {
+      const sameResourceCount = existing.filter((booking) => booking.resource_id === candidate.id).length
+      return sameResourceCount < Number(candidate.capacity || 1)
+    })
+
+    if (!availableResource) {
+      throw new Error('This time is no longer available. Please choose another available time.')
+    }
+
+    assignedResourceId = String(availableResource.id)
+  }
+
+  if (assignedResourceId) {
+    const sameResourceCount = existing.filter((booking) => booking.resource_id === assignedResourceId).length
     const capacity = Number(resource?.capacity || 1)
-    if (sameResourceCount >= capacity) {
+    if (resource && sameResourceCount >= capacity) {
       throw new Error(`${resource?.name || 'Selected resource'} is already fully booked for this time.`)
     }
   }
@@ -224,6 +265,8 @@ async function assertAvailability(params: {
       throw new Error('Selected photographer/staff member is already assigned to another booking at this time.')
     }
   }
+
+  return assignedResourceId
 }
 
 export async function POST(request: NextRequest) {
@@ -316,12 +359,12 @@ export async function POST(request: NextRequest) {
 
     const bookingEnvironment = normalizeEnvironment(body.booking_environment)
     const privacyLevel = normalizePrivacy(body.privacy_level)
-    const resourceId = body.resource_id ? String(body.resource_id) : null
+    let resourceId = body.resource_id ? String(body.resource_id) : null
     const staffId = body.staff_id ? String(body.staff_id) : null
     const allowOverride = Boolean(adminUserId && body.availability_override)
     const endTime = body.end_time || addMinutes(startTime, Number(service.duration_minutes || 60))
 
-    await assertAvailability({
+    resourceId = await assertAvailability({
       supabase,
       bookingDate,
       startTime,
