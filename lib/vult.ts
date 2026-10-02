@@ -1,13 +1,14 @@
 import crypto from 'crypto'
 
 export type VultPaymentType = 'card' | 'in-app' | 'momo'
+export type VultCurrency = 'SLE' | 'USD'
 
 export type VultPaymentLinkRequest = {
   merchantId: string
   type: VultPaymentType
   payload: {
     orderId: string
-    currency: 'SLE'
+    currency: VultCurrency
     amount: string
   }
 }
@@ -140,6 +141,7 @@ export async function createVultPaymentLink(input: {
   orderId: string
   amount: number
   type: VultPaymentType
+  currency?: VultCurrency
 }) {
   const merchantId = process.env.VULT_MERCHANT_ID
 
@@ -152,7 +154,7 @@ export async function createVultPaymentLink(input: {
     type: input.type,
     payload: {
       orderId: input.orderId,
-      currency: 'SLE',
+      currency: input.currency || 'SLE',
       amount: Number(input.amount).toFixed(2),
     },
   }

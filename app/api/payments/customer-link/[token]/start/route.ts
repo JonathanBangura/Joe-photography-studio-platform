@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createVultPaymentLink, mapPaymentMethodToVultType } from '@/lib/vult'
+import {
+  createVultPaymentLink,
+  mapPaymentMethodToVultType,
+  type VultCurrency,
+} from '@/lib/vult'
 
 type Params = {
   params: Promise<{ token: string }>
@@ -9,12 +13,13 @@ type Params = {
 const allowedMethods = new Set(['vult_app', 'mobile_money', 'card'])
 
 function money(value: unknown) {
-  return Number(Number(value || 0).toFixed(2))
+  const number = Number(value)
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : 0
 }
 
 function createOrderId() {
   const now = new Date()
-  const date = now.toISOString().slice(2, 10).replace(/-/g, '') // YYMMDD
+  const date = now.toISOString().slice(2, 10).replace(/-/g, '')
   const random = Math.random().toString(36).slice(2, 6).toUpperCase()
 
   return `JOESTUDIO-${date}-${random}`
@@ -25,13 +30,17 @@ function isExpired(value?: string | null) {
   return new Date(value).getTime() < Date.now()
 }
 
-function getInvoiceTotalSle(invoice: any) {
+function getExchangeRate(invoice: any, booking: any) {
+  const rate = Number(invoice?.exchange_rate || booking?.exchange_rate || 24)
+  return Number.isFinite(rate) && rate > 0 ? rate : 24
+}
+
+function getInvoiceTotalSle(invoice: any, exchangeRate: number) {
   if (invoice?.total_amount_sle !== null && invoice?.total_amount_sle !== undefined) {
     return money(invoice.total_amount_sle)
   }
 
   const totalUsd = money(invoice?.total_amount || 0)
-  const exchangeRate = money(invoice?.exchange_rate || 1)
   return money(totalUsd * exchangeRate)
 }
 
@@ -41,10 +50,10 @@ export async function POST(request: Request, { params }: Params) {
     const body = await request.json()
     const supabase = createAdminClient()
 
-    const amount = money(body.amount)
+    const enteredAmount = money(body.amount)
     const paymentMethod = String(body.payment_method || '').trim()
 
-    if (!amount || amount <= 0) {
+    if (!enteredAmount || enteredAmount <= 0) {
       return NextResponse.json({ error: 'Enter a valid payment amount.' }, { status: 400 })
     }
 
@@ -61,7 +70,9 @@ export async function POST(request: Request, { params }: Params) {
     if (linkError) throw linkError
     if (!link) return NextResponse.json({ error: 'Payment link not found.' }, { status: 404 })
     if (link.status !== 'active') return NextResponse.json({ error: 'This payment link is not active.' }, { status: 403 })
-    if (isExpired(link.expires_at)) return NextResponse.json({ error: 'This payment link has expired. Please contact the studio.' }, { status: 403 })
+    if (isExpired(link.expires_at)) {
+      return NextResponse.json({ error: 'This payment link has expired. Please contact the studio.' }, { status: 403 })
+    }
 
     const { data: payments, error: paymentsError } = await supabase
       .from('payments')
@@ -70,7 +81,7 @@ export async function POST(request: Request, { params }: Params) {
 
     if (paymentsError) throw paymentsError
 
-    const paidAmount = money(
+    const paidAmountSle = money(
       (payments || [])
         .filter((payment) => payment.payment_status !== 'failed')
         .reduce((sum, payment) => {
@@ -81,17 +92,36 @@ export async function POST(request: Request, { params }: Params) {
         }, 0),
     )
 
-    const totalAmount = getInvoiceTotalSle(link.invoice)
-    const balanceAmount = money(Math.max(totalAmount - paidAmount, 0))
-    const appliedAmount = money(Math.min(amount, balanceAmount))
-    const tipAmount = money(Math.max(amount - balanceAmount, 0))
+    const exchangeRate = getExchangeRate(link.invoice, link.booking)
+    const totalAmountSle = getInvoiceTotalSle(link.invoice, exchangeRate)
+    const balanceAmountSle = money(Math.max(totalAmountSle - paidAmountSle, 0))
+
+    const isCardPayment = paymentMethod === 'card'
+    const processorCurrency: VultCurrency = isCardPayment ? 'USD' : 'SLE'
+    const processorAmount = enteredAmount
+
+    const rawAmountSle = money(
+      isCardPayment ? processorAmount * exchangeRate : processorAmount,
+    )
+
+    // USD is charged to two decimal places. Snap a near-full card payment to
+    // the exact SLE balance when the only difference is USD-cent rounding.
+    const oneUsdCentInSle = exchangeRate / 100
+    const amountSle =
+      isCardPayment && Math.abs(rawAmountSle - balanceAmountSle) <= oneUsdCentInSle
+        ? balanceAmountSle
+        : rawAmountSle
+
+    const appliedAmountSle = money(Math.min(amountSle, balanceAmountSle))
+    const tipAmountSle = money(Math.max(amountSle - balanceAmountSle, 0))
     const orderId = createOrderId()
     const vultType = mapPaymentMethodToVultType(paymentMethod)
 
     const vult = await createVultPaymentLink({
       orderId,
-      amount,
+      amount: processorAmount,
       type: vultType,
+      currency: processorCurrency,
     })
 
     const { data: order, error: orderError } = await supabase
@@ -102,10 +132,14 @@ export async function POST(request: Request, { params }: Params) {
         invoice_id: link.invoice_id,
         client_id: link.client_id,
         order_id: orderId,
-        amount,
-        applied_amount: appliedAmount,
-        tip_amount: tipAmount,
+
+        // Existing JoeStudio accounting stays in SLE so current invoice,
+        // finance, payment-history and webhook logic remain compatible.
+        amount: amountSle,
+        applied_amount: appliedAmountSle,
+        tip_amount: tipAmountSle,
         currency: 'SLE',
+
         payment_method: paymentMethod,
         processor: 'vult',
         processor_request_id: vult.requestId || null,
@@ -117,9 +151,17 @@ export async function POST(request: Request, { params }: Params) {
           vult_code: vult.code,
           vult_qr_code: vult.qrCode,
           vult_response: vult.result,
-          balance_before_payment: balanceAmount,
-          invoice_total_sle: totalAmount,
-          paid_before_payment: paidAmount,
+          vult_request_body: vult.requestBody,
+
+          processor_currency: processorCurrency,
+          processor_amount: processorAmount,
+          accounting_currency: 'SLE',
+          accounting_amount_sle: amountSle,
+          exchange_rate: exchangeRate,
+
+          balance_before_payment_sle: balanceAmountSle,
+          invoice_total_sle: totalAmountSle,
+          paid_before_payment_sle: paidAmountSle,
         },
       })
       .select('*')
@@ -145,14 +187,22 @@ export async function POST(request: Request, { params }: Params) {
       payment_url: vult.link,
       payment_code: vult.code,
       qr_code: vult.qrCode,
-      amount,
-      applied_amount: appliedAmount,
-      tip_amount: tipAmount,
+
+      // Actual processor amount/currency.
+      amount: processorAmount,
+      currency: processorCurrency,
+
+      // JoeStudio accounting remains SLE.
+      amount_sle: amountSle,
+      applied_amount: appliedAmountSle,
+      tip_amount: tipAmountSle,
+      exchange_rate: exchangeRate,
+
       message: paymentMethod === 'mobile_money'
         ? 'Mobile money payment code generated.'
         : paymentMethod === 'vult_app'
           ? 'Vult App payment link generated.'
-          : 'Card checkout link generated.',
+          : 'Card checkout link generated in USD.',
     })
   } catch (error) {
     console.error('Start Vult payment error:', error)

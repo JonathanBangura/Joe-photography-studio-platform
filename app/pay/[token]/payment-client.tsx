@@ -1,13 +1,34 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Copy, CreditCard, ExternalLink, Loader2, QrCode, Smartphone, Wallet, X } from 'lucide-react'
+import {
+  Copy,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  QrCode,
+  Smartphone,
+  Wallet,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { toast } from 'sonner'
 
 type PaymentData = {
@@ -62,12 +83,17 @@ const paymentMethods: Array<{
   {
     value: 'card',
     title: 'Debit/Credit Card',
-    description: 'Visa, Mastercard and more',
+    description: 'Visa, Mastercard and more • Card payments are charged in USD',
     icon: CreditCard,
     asset: '/payment-assets/card-icon.png',
     cardAssets: ['/payment-assets/visa.png', '/payment-assets/mastercard.png'],
   },
 ]
+
+function money(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : 0
+}
 
 function formatSle(value: unknown) {
   return `SLE ${Number(value || 0).toLocaleString(undefined, {
@@ -104,7 +130,7 @@ export function PaymentClient({ token }: { token: string }) {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Unable to load payment link')
       setData(result.data)
-      if (!amount) setAmount(String(result.data?.totals?.balance_amount || ''))
+      if (!amount) setAmount(String(money(result.data?.totals?.balance_amount || 0)))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to load payment link')
     } finally {
@@ -117,10 +143,58 @@ export function PaymentClient({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  const numericAmount = Number(amount || 0)
-  const balance = Number(data?.totals?.balance_amount || 0)
-  const overpayment = useMemo(() => Math.max(numericAmount - balance, 0), [numericAmount, balance])
-  const appliedAmount = useMemo(() => Math.min(numericAmount, balance), [numericAmount, balance])
+  const exchangeRate =
+    Number(data?.totals?.exchange_rate || 0) > 0
+      ? Number(data?.totals?.exchange_rate)
+      : 24
+
+  const balanceSle = money(data?.totals?.balance_amount || 0)
+  const balanceUsd = money(balanceSle / exchangeRate)
+  const isCardPayment = paymentMethod === 'card'
+  const numericAmount = money(amount)
+
+  const paymentAmountSle = useMemo(
+    () => money(isCardPayment ? numericAmount * exchangeRate : numericAmount),
+    [exchangeRate, isCardPayment, numericAmount],
+  )
+
+  const overpaymentSle = useMemo(
+    () => money(Math.max(paymentAmountSle - balanceSle, 0)),
+    [paymentAmountSle, balanceSle],
+  )
+
+  const appliedAmountSle = useMemo(
+    () => money(Math.min(paymentAmountSle, balanceSle)),
+    [paymentAmountSle, balanceSle],
+  )
+
+  const appliedAmountDisplay = isCardPayment
+    ? money(appliedAmountSle / exchangeRate)
+    : appliedAmountSle
+
+  const overpaymentDisplay = isCardPayment
+    ? money(overpaymentSle / exchangeRate)
+    : overpaymentSle
+
+  const selectedBalance = isCardPayment ? balanceUsd : balanceSle
+
+  function formatSelectedCurrency(value: unknown) {
+    return isCardPayment ? formatUsd(value) : formatSle(value)
+  }
+
+  function selectPaymentMethod(nextMethod: PaymentMethodValue) {
+    if (nextMethod === paymentMethod) return
+
+    const currentAmount = money(amount)
+
+    if (nextMethod === 'card' && paymentMethod !== 'card') {
+      setAmount(String(money(currentAmount / exchangeRate)))
+    } else if (nextMethod !== 'card' && paymentMethod === 'card') {
+      setAmount(String(money(currentAmount * exchangeRate)))
+    }
+
+    setPaymentMethod(nextMethod)
+  }
 
   async function copyText(value?: string | null, label = 'Copied') {
     if (!value) return
@@ -234,20 +308,40 @@ export function PaymentClient({ token }: { token: string }) {
                 <p className="text-sm text-muted-foreground">Service</p>
                 <p className="font-medium">{data.booking?.service?.name || 'Photography Session'}</p>
               </div>
+
               <div className="space-y-3 rounded-lg border p-4">
                 {data.totals.total_amount_usd !== undefined && (
-                  <div className="flex justify-between"><span>Total USD</span><strong>{formatUsd(data.totals.total_amount_usd)}</strong></div>
+                  <div className="flex justify-between">
+                    <span>Total USD</span>
+                    <strong>{formatUsd(data.totals.total_amount_usd)}</strong>
+                  </div>
                 )}
                 {data.totals.exchange_rate && (
-                  <div className="flex justify-between text-sm text-muted-foreground"><span>Exchange Rate</span><span>1 USD = SLE {Number(data.totals.exchange_rate).toLocaleString()}</span></div>
+                  <div className="flex justify-between text-sm text-muted-foreground">
+                    <span>Exchange Rate</span>
+                    <span>1 USD = SLE {Number(data.totals.exchange_rate).toLocaleString()}</span>
+                  </div>
                 )}
-                <div className="flex justify-between"><span>Total Payable</span><strong>{formatSle(data.totals.total_amount)}</strong></div>
-                <div className="flex justify-between"><span>Paid</span><strong>{formatSle(data.totals.paid_amount)}</strong></div>
-                <div className="flex justify-between text-primary"><span>Balance</span><strong>{formatSle(data.totals.balance_amount)}</strong></div>
+                <div className="flex justify-between">
+                  <span>Total Payable</span>
+                  <strong>{formatSle(data.totals.total_amount)}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Paid</span>
+                  <strong>{formatSle(data.totals.paid_amount)}</strong>
+                </div>
+                <div className="flex justify-between text-primary">
+                  <span>Balance</span>
+                  <strong>{formatSle(data.totals.balance_amount)}</strong>
+                </div>
                 {data.totals.tip_amount > 0 && (
-                  <div className="flex justify-between text-muted-foreground"><span>Tips received</span><strong>{formatSle(data.totals.tip_amount)}</strong></div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Tips received</span>
+                    <strong>{formatSle(data.totals.tip_amount)}</strong>
+                  </div>
                 )}
               </div>
+
               <div className="rounded-lg border p-4">
                 <p className="mb-2 font-medium">Payment History</p>
                 {data.payments.length === 0 ? (
@@ -269,7 +363,9 @@ export function PaymentClient({ token }: { token: string }) {
           <Card className="lg:col-span-3">
             <CardHeader>
               <CardTitle>Make a Payment</CardTitle>
-              <CardDescription>Pay by instalment or clear your remaining balance. All Vult payments are processed in SLE.</CardDescription>
+              <CardDescription>
+                Pay by instalment or clear your remaining balance. Vult App and Mobile Money are processed in SLE. Debit/Credit Card payments are processed in USD.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
@@ -282,7 +378,7 @@ export function PaymentClient({ token }: { token: string }) {
                       <button
                         key={method.value}
                         type="button"
-                        onClick={() => setPaymentMethod(method.value)}
+                        onClick={() => selectPaymentMethod(method.value)}
                         className={`flex min-h-[104px] items-center gap-5 rounded-2xl border-2 p-5 text-left transition ${selected ? 'border-primary bg-primary/5 shadow-sm' : 'border-muted hover:border-primary/50'}`}
                       >
                         <div className="flex h-16 w-28 shrink-0 items-center justify-center rounded-xl bg-background p-2 shadow-sm">
@@ -310,38 +406,81 @@ export function PaymentClient({ token }: { token: string }) {
               </div>
 
               <div className="space-y-2">
-                <Label>Amount to Pay in SLE</Label>
-                <Input type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
+                <Label>Amount to Pay in {isCardPayment ? 'USD' : 'SLE'}</Label>
+                <Input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
+
+                {isCardPayment && (
+                  <p className="text-xs text-muted-foreground">
+                    Card payments are charged in USD using the invoice exchange rate of 1 USD = SLE {exchangeRate.toLocaleString()}.
+                  </p>
+                )}
+
                 <div className="flex flex-wrap gap-2 pt-2">
                   {[25, 50, 100].map((percent) => {
-                    const value = Number(((balance * percent) / 100).toFixed(2))
+                    const value = money((selectedBalance * percent) / 100)
                     return (
-                      <Button key={percent} type="button" variant="outline" size="sm" onClick={() => setAmount(String(value))} disabled={balance <= 0}>
+                      <Button
+                        key={percent}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAmount(String(value))}
+                        disabled={selectedBalance <= 0}
+                      >
                         {percent}% Balance
                       </Button>
                     )
                   })}
-                  <Button type="button" variant="outline" size="sm" onClick={() => setAmount(String(balance))} disabled={balance <= 0}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAmount(String(selectedBalance))}
+                    disabled={selectedBalance <= 0}
+                  >
                     Full Balance
                   </Button>
                 </div>
               </div>
 
-              {overpayment > 0 && (
+              {overpaymentSle > 0 && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700">
-                  You are paying {formatSle(overpayment)} more than your current balance. This extra amount will be recorded as a tip to the studio.
+                  You are paying {formatSelectedCurrency(overpaymentDisplay)} more than your current balance. This extra amount will be recorded as a tip to the studio.
                 </div>
               )}
 
-              <div className="rounded-lg border p-4 space-y-2">
-                <div className="flex justify-between"><span>Applied to invoice</span><strong>{formatSle(appliedAmount)}</strong></div>
-                <div className="flex justify-between"><span>Tip</span><strong>{formatSle(overpayment)}</strong></div>
-                <div className="flex justify-between text-lg"><span>Total to pay</span><strong>{formatSle(numericAmount)}</strong></div>
+              <div className="space-y-2 rounded-lg border p-4">
+                <div className="flex justify-between">
+                  <span>Applied to invoice</span>
+                  <strong>{formatSelectedCurrency(appliedAmountDisplay)}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tip</span>
+                  <strong>{formatSelectedCurrency(overpaymentDisplay)}</strong>
+                </div>
+                <div className="flex justify-between text-lg">
+                  <span>Total to pay</span>
+                  <strong>{formatSelectedCurrency(numericAmount)}</strong>
+                </div>
+
+                {isCardPayment && (
+                  <>
+                    <div className="my-2 border-t" />
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>SLE equivalent</span>
+                      <span>{formatSle(paymentAmountSle)}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <Button className="w-full" size="lg" onClick={startPayment} disabled={paying}>
                 {paying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {selectedMethod ? `Pay with ${selectedMethod.title}` : 'Continue to Payment'}
+                {selectedMethod
+                  ? isCardPayment
+                    ? `Pay ${formatUsd(numericAmount)} with ${selectedMethod.title}`
+                    : `Pay with ${selectedMethod.title}`
+                  : 'Continue to Payment'}
               </Button>
             </CardContent>
           </Card>
@@ -357,12 +496,7 @@ export function PaymentClient({ token }: { token: string }) {
 
           {modal?.type === 'mobile_money' && (
             <div className="p-8 text-center">
-              <button
-                type="button"
-                onClick={() => setModal(null)}
-                className="absolute right-5 top-5 rounded-full p-2 hover:bg-muted"
-                aria-label="Close"
-              >
+              <button type="button" onClick={() => setModal(null)} className="absolute right-5 top-5 rounded-full p-2 hover:bg-muted" aria-label="Close">
                 <X className="h-6 w-6" />
               </button>
 
@@ -396,12 +530,7 @@ export function PaymentClient({ token }: { token: string }) {
 
           {modal?.type === 'vult_app' && (
             <div className="p-8">
-              <button
-                type="button"
-                onClick={() => setModal(null)}
-                className="absolute right-5 top-5 rounded-full p-2 hover:bg-muted"
-                aria-label="Close"
-              >
+              <button type="button" onClick={() => setModal(null)} className="absolute right-5 top-5 rounded-full p-2 hover:bg-muted" aria-label="Close">
                 <X className="h-6 w-6" />
               </button>
 
